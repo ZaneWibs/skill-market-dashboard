@@ -1,0 +1,22 @@
+# Virtual environment -- JANGAN pernah di-commit, cukup dibuat ulang via requirements.txt
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Database besar (opsional -- hapus baris ini kalau memang ingin ikut ke GitHub
+# dan ukurannya di bawah 100MB)
+# outputs/*.sqlite
