@@ -510,8 +510,8 @@ def page_kbji_classification():
     st.title("🗂️ Klasifikasi Jabatan (KBJI 2014)")
     st.caption("Setiap judul pekerjaan dikelompokkan ke salah satu dari 9 jabatan "
               "KBJI 2014 (kode 1-9; TNI/POLRI dikecualikan). Metode: lexicon → fuzzy → k-NN "
-              "embedding terhadap 2.155 nama pekerjaan riil dari dokumen KBJI. Lihat Bagian 8d "
-              "pada notebook untuk detail metodologi.")
+              "embedding terhadap 2.155 nama pekerjaan riil dari dokumen KBJI."
+              )
 
     # (v15) Lowongan yang ditangguhkan (mis. tautan sudah mati sehingga jabatannya
     # tidak dapat dipastikan) disembunyikan dari halaman ini atas keputusan
