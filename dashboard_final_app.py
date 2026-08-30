@@ -437,9 +437,19 @@ def page_kbji_classification():
               "embedding terhadap 2.155 nama pekerjaan riil dari dokumen KBJI. Lihat Bagian 8d "
               "pada notebook untuk detail metodologi.")
 
-    dist = q("""SELECT kbji_golongan_pokok_nama AS jabatan, COUNT(*) n,
-                       AVG(kbji_confidence) conf_rata
-                FROM jobs GROUP BY jabatan ORDER BY n DESC""")
+    # (v15) Lowongan yang ditangguhkan (mis. tautan sudah mati sehingga jabatannya
+    # tidak dapat dipastikan) disembunyikan dari halaman ini atas keputusan
+    # pembimbing. Barisnya TETAP ada di database agar total korpus utuh, dan tetap
+    # ikut dihitung pada halaman lain yang menganalisis skill.
+    _kolom_jobs = q("SELECT * FROM jobs LIMIT 1").columns.tolist()
+    ADA_TANGGUH = "kbji_ditangguhkan" in _kolom_jobs
+    FILTER = "WHERE COALESCE(kbji_ditangguhkan,0)=0" if ADA_TANGGUH else ""
+    n_tangguh = q("SELECT COUNT(*) n FROM jobs WHERE COALESCE(kbji_ditangguhkan,0)=1").n[0] \
+        if ADA_TANGGUH else 0
+
+    dist = q(f"""SELECT kbji_golongan_pokok_nama AS jabatan, COUNT(*) n,
+                        AVG(kbji_confidence) conf_rata
+                 FROM jobs {FILTER} GROUP BY jabatan ORDER BY n DESC""")
     dist["jabatan"] = pd.Categorical(dist["jabatan"],
                                       categories=[g for g in KBJI_ORDER if g in dist.jabatan.values],
                                       ordered=True)
@@ -453,13 +463,19 @@ def page_kbji_classification():
              f"{n_unclass / dist.n.sum():.1%}" if dist.n.sum() else "0%")
     c3.metric("Rata-rata confidence", f"{(dist.n * dist.conf_rata).sum() / dist.n.sum():.2f}")
 
-    _kolom_jobs = q("SELECT * FROM jobs LIMIT 1").columns.tolist()
     if "kbji_source" in _kolom_jobs:
-        _man = q("SELECT COUNT(*) n FROM jobs WHERE kbji_source='manual_review'").n[0]
+        _man = q("""SELECT COUNT(*) n FROM jobs
+                    WHERE kbji_source IN ('manual_review','telaah_pembimbing')""").n[0]
         if _man:
-            st.info(f"{_man} lowongan telah dikoreksi manual berdasarkan telaah pembimbing "
-                   "(lihat `kbji_override.py` untuk daftar koreksi beserta alasannya). "
+            st.info(f"{_man} lowongan telah dikoreksi atau ditetapkan manual berdasarkan "
+                   "telaah pembimbing (lihat `kbji_override.py` dan "
+                   "`kbji_telaah_pembimbing.py` untuk daftar lengkap beserta alasannya). "
                    "Sisanya hasil klasifikasi otomatis.")
+    if n_tangguh:
+        st.warning(f"{n_tangguh} lowongan ditangguhkan dan tidak ditampilkan di halaman ini "
+                  "karena tautan aslinya sudah tidak dapat diakses, sehingga jabatannya "
+                  "belum dapat dipastikan. Barisnya tetap tersimpan di database dan tetap "
+                  "ikut dihitung pada halaman analisis skill.")
 
     st.subheader("Distribusi Lowongan per Jabatan")
     st.plotly_chart(px.bar(dist, x="jabatan", y="n", color="jabatan",
@@ -467,14 +483,15 @@ def page_kbji_classification():
                     labels={"jabatan": "Jabatan", "n": "Jumlah Lowongan"}),
                     use_container_width=True)
 
+    _and = "AND COALESCE(kbji_ditangguhkan,0)=0" if ADA_TANGGUH else ""
     tab1, tab2 = st.tabs(["Jelajah per Jabatan", "Kualitas Klasifikasi (QA)"])
 
     with tab1:
         pilihan = [g for g in KBJI_ORDER if g in dist.jabatan.values]
         pick = st.selectbox("Pilih jabatan", pilihan)
-        df = q("""SELECT title AS pekerjaan, COUNT(*) n, AVG(kbji_confidence) conf
-                 FROM jobs WHERE kbji_golongan_pokok_nama = ?
-                 GROUP BY title ORDER BY n DESC""", (pick,))
+        df = q(f"""SELECT title AS pekerjaan, COUNT(*) n, AVG(kbji_confidence) conf
+                   FROM jobs WHERE kbji_golongan_pokok_nama = ? {_and}
+                   GROUP BY title ORDER BY n DESC""", (pick,))
         view, info = paginate(df, "kbji_jelajah")
         st.caption(info)
         _top = view.head(20)
@@ -496,9 +513,10 @@ def page_kbji_classification():
     with tab2:
         st.caption("Klasifikasi dengan confidence rendah lebih berisiko salah -- berguna untuk "
                   "spot-check manual atau menambah kata kunci lexicon di notebook.")
-        low = q("""SELECT title AS pekerjaan, kbji_golongan_pokok_nama AS jabatan, kbji_confidence AS conf
-                  FROM jobs WHERE title != '' GROUP BY title
-                  ORDER BY conf ASC LIMIT 100""")
+        low = q(f"""SELECT title AS pekerjaan, kbji_golongan_pokok_nama AS jabatan,
+                           kbji_confidence AS conf
+                    FROM jobs WHERE title != '' {_and} GROUP BY title
+                    ORDER BY conf ASC LIMIT 100""")
         st.dataframe(
             low.rename(columns={"pekerjaan": "Pekerjaan", "jabatan": "Jabatan", "conf": "Confidence"}),
             use_container_width=True, hide_index=True)
