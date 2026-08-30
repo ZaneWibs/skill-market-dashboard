@@ -1149,16 +1149,7 @@ lebih menonjol pada jabatan ini daripada rata-rata pasar.*
 - **Selisih negatif** → skill yang justru **lebih jarang** diminta pada jabatan ini
   dibanding pasar umum.
 
-**Peringatan penting saat menafsirkan.**
-1. Halaman ini mengukur **kekhasan skill terhadap jabatan**, bukan kekurangan
-   tenaga kerja. Selisih yang ditampilkan sepenuhnya berada di sisi *permintaan*
-   (lowongan kerja). Untuk menyimpulkan adanya kesenjangan keterampilan
-   (*skill gap*) yang sesungguhnya, diperlukan pula data sisi *penawaran*
-   seperti profil lulusan, yang tidak tersedia dalam data lowongan ini.
-2. Angkanya adalah **pangsa relatif**, bukan persentase lowongan. Bila satu
-   lowongan menyebut 10 skill, tiap skill menyumbang 1/10 pada penyebutnya.
-3. Jabatan dengan jumlah lowongan sedikit menghasilkan pangsa yang tidak stabil —
-   perhatikan jumlah lowongan yang tertera di bawah sebelum menarik kesimpulan.
+
         """)
     base = q(f"""SELECT s.name, COUNT(*) f FROM job_skills js JOIN skills s ON s.id=js.skill_id
                  WHERE s.escudero_broad_category IN {broad_sql} GROUP BY s.name""")
