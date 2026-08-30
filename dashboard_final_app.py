@@ -312,6 +312,7 @@ page = st.sidebar.radio("Halaman", [
     "Jenjang Pendidikan & Bidang Studi",
     "Skill yang Sering Muncul Bersama",
     "Tren Permintaan Skill",
+    "Gaji yang Ditawarkan",
     "Occupation-Specific Skills",
 ])
 
@@ -510,8 +511,8 @@ def page_kbji_classification():
     st.title("🗂️ Klasifikasi Jabatan (KBJI 2014)")
     st.caption("Setiap judul pekerjaan dikelompokkan ke salah satu dari 9 jabatan "
               "KBJI 2014 (kode 1-9; TNI/POLRI dikecualikan). Metode: lexicon → fuzzy → k-NN "
-              "embedding terhadap 2.155 nama pekerjaan riil dari dokumen KBJI."
-              )
+              "embedding terhadap 2.155 nama pekerjaan riil dari dokumen KBJI. Lihat Bagian 8d "
+              "pada notebook untuk detail metodologi.")
 
     # (v15) Lowongan yang ditangguhkan (mis. tautan sudah mati sehingga jabatannya
     # tidak dapat dipastikan) disembunyikan dari halaman ini atas keputusan
@@ -1198,6 +1199,207 @@ def page_trends():
         st.plotly_chart(fig, use_container_width=True)
 
 
+def page_salary():
+    st.title("💰 Gaji yang Ditawarkan")
+
+    _kol = q("SELECT * FROM jobs LIMIT 1").columns.tolist()
+    if "salary_min" not in _kol:
+        st.error("Kolom gaji belum ada di basis data. Jalankan lebih dulu:\n\n"
+                "`python salary_import.py outputs/ner_jobposting.sqlite "
+                "ALL_batches_gold_annotations.json`")
+        return
+
+    st.info(
+        "**Sumber data.** Angka pada halaman ini berasal dari field terstruktur "
+        "`salary_min`/`salary_max` pada metadata lowongan, **bukan** dari keluaran "
+        "model NER. Entitas SALARY hasil model hanya terdeteksi pada 143 lowongan "
+        "(2,8% korpus) dan masih berupa teks bebas yang belum ternormalisasi. "
+        "Halaman ini karenanya merupakan analisis deskriptif atas metadata lowongan.")
+
+    cakup = q("""SELECT COUNT(*) total,
+                        SUM(salary_min IS NOT NULL) ada,
+                        SUM(COALESCE(salary_wajar,0)=1) wajar FROM jobs""")
+    total, ada, wajar = int(cakup.total[0]), int(cakup.ada[0]), int(cakup.wajar[0])
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Lowongan mencantumkan gaji", f"{ada:,}", f"{ada/total:.1%} dari korpus")
+    c2.metric("Dipakai untuk analisis", f"{wajar:,}", f"{wajar/total:.1%} dari korpus")
+    c3.metric("Tanpa informasi gaji", f"{total-ada:,}", f"{(total-ada)/total:.1%}")
+
+    st.caption(
+        f"{ada - wajar} lowongan dikeluarkan dari analisis karena angkanya di luar "
+        "rentang upah bulanan yang wajar (di bawah Rp1 juta atau di atas Rp100 juta). "
+        "Hampir semuanya bukan upah bulanan — misalnya upah harian, honor per artikel, "
+        "atau uang saku magang — sehingga akan menarik turun median bila diikutkan.")
+
+    pakai_max = st.radio(
+        "Angka yang dianalisis", ["Batas bawah (salary_min)", "Titik tengah rentang"],
+        horizontal=True, key="gaji_dasar",
+        help="Titik tengah = rata-rata batas bawah dan batas atas; untuk lowongan "
+             "yang hanya mencantumkan satu angka, batas bawah yang dipakai.")
+    kolom_gaji = ("salary_min" if pakai_max.startswith("Batas bawah")
+                  else "((salary_min + COALESCE(salary_max, salary_min)) / 2.0)")
+
+    FILTER = "WHERE COALESCE(salary_wajar,0)=1"
+
+    def rp(x):
+        return f"Rp{x:,.0f}".replace(",", ".")
+
+    tab1, tab2, tab3 = st.tabs(
+        ["Sebaran Keseluruhan", "Gaji per Jabatan KBJI", "Gaji per Pekerjaan"])
+
+    # ------------------------------------------------------------------ tab 1
+    with tab1:
+        d = q(f"SELECT {kolom_gaji} AS gaji FROM jobs {FILTER}")
+        s = d.gaji
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Median", rp(s.median()))
+        k2.metric("Rata-rata", rp(s.mean()))
+        k3.metric("Persentil 25", rp(s.quantile(.25)))
+        k4.metric("Persentil 75", rp(s.quantile(.75)))
+        st.caption("Median lebih tepat dipakai sebagai ukuran pemusatan di sini "
+                  "karena sebaran gaji menjulur ke kanan: sedikit lowongan bergaji "
+                  "sangat tinggi menarik rata-rata ke atas.")
+
+        fig = px.histogram(d, x="gaji", nbins=60,
+                           color_discrete_sequence=["#6366F1"],
+                           labels={"gaji": "Gaji (Rp per bulan)", "count": "Jumlah Lowongan"},
+                           title="Sebaran gaji yang ditawarkan")
+        fig.add_vline(x=s.median(), line_dash="dash", line_color="#DC2626",
+                      annotation_text=f"Median {rp(s.median())}")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("Menurut jenjang pendidikan yang diminta")
+        edu = q(f"""SELECT e.text AS jenjang, {kolom_gaji} AS gaji FROM jobs j
+                    JOIN entities e ON e.job_id=j.id AND e.label='EDUCATION_LEVEL'
+                    WHERE COALESCE(j.salary_wajar,0)=1""")
+        if not edu.empty:
+            g = (edu.groupby("jenjang")["gaji"]
+                 .agg(["median", "count"]).reset_index()
+                 .query("count >= 30").sort_values("median", ascending=False).head(12))
+            if not g.empty:
+                fig = px.bar(g.iloc[::-1], x="median", y="jenjang", orientation="h",
+                             height=32 * len(g) + 150,
+                             color_discrete_sequence=["#10B981"],
+                             labels={"median": "Median Gaji (Rp)", "jenjang": "Jenjang"},
+                             hover_data={"count": True})
+                fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption("Hanya jenjang dengan minimal 30 lowongan yang ditampilkan. "
+                          "Teks jenjang diambil apa adanya dari entitas EDUCATION_LEVEL "
+                          "hasil model, sehingga satu jenjang bisa muncul dalam beberapa "
+                          "penulisan berbeda.")
+
+    # ------------------------------------------------------------------ tab 2
+    with tab2:
+        d = q(f"""SELECT kbji_golongan_pokok_nama AS jabatan, {kolom_gaji} AS gaji
+                  FROM jobs {FILTER} AND COALESCE(kbji_ditangguhkan,0)=0""")
+        g = (d.groupby("jabatan")["gaji"].agg(["median", "mean", "count"])
+             .reset_index().query("count >= 10").sort_values("median", ascending=False))
+        if g.empty:
+            st.info("Belum ada jabatan dengan jumlah lowongan memadai.")
+        else:
+            fig = px.bar(g.iloc[::-1], x="median", y="jabatan", orientation="h",
+                         height=42 * len(g) + 150, color="jabatan",
+                         color_discrete_map=KBJI_COLORS,
+                         labels={"median": "Median Gaji (Rp per bulan)",
+                                 "jabatan": "Jabatan"},
+                         title="Median gaji menurut jabatan KBJI")
+            fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+            box = d[d.jabatan.isin(g.jabatan)]
+            fig2 = px.box(box, x="gaji", y="jabatan", color="jabatan",
+                          color_discrete_map=KBJI_COLORS, height=42 * len(g) + 180,
+                          labels={"gaji": "Gaji (Rp per bulan)", "jabatan": "Jabatan"},
+                          title="Sebaran gaji dalam tiap jabatan")
+            fig2.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+            fig2.update_layout(showlegend=False)
+            st.plotly_chart(fig2, use_container_width=True)
+            st.caption("Diagram kotak memperlihatkan bahwa rentang gaji DI DALAM satu "
+                      "jabatan sering lebih lebar daripada selisih ANTAR jabatan.")
+
+            tampil = g.copy()
+            tampil["median"] = tampil["median"].map(rp)
+            tampil["mean"] = tampil["mean"].map(rp)
+            st.dataframe(tampil.rename(columns={
+                "jabatan": "Jabatan", "median": "Median", "mean": "Rata-rata",
+                "count": "Jumlah Lowongan"}), use_container_width=True, hide_index=True)
+            st.caption("Hanya jabatan dengan minimal 10 lowongan bergaji yang ditampilkan.")
+
+    # ------------------------------------------------------------------ tab 3
+    with tab3:
+        min_n = st.slider("Jumlah lowongan minimal per pekerjaan", 3, 50, 10,
+                          help="Median dari sedikit lowongan sangat tidak stabil. "
+                               "Turunkan bila ingin melihat pekerjaan yang jarang muncul.")
+        d = q(f"""SELECT title AS pekerjaan, {kolom_gaji} AS gaji
+                  FROM jobs {FILTER} AND title != ''""")
+        g = (d.groupby("pekerjaan")["gaji"]
+             .agg(median="median", count="count", p25=lambda x: x.quantile(.25),
+                  p75=lambda x: x.quantile(.75))
+             .reset_index().query("count >= @min_n"))
+        if g.empty:
+            st.info("Tidak ada pekerjaan yang memenuhi ambang. Turunkan nilainya.")
+            return
+
+        st.caption(f"{len(g):,} pekerjaan memenuhi ambang minimal {min_n} lowongan, "
+                  f"mencakup {int(g['count'].sum()):,} lowongan bergaji.")
+
+        atas = g.nlargest(15, "median")
+        bawah = g.nsmallest(15, "median")
+        for judul, sub, warna in [
+                ("15 pekerjaan dengan median gaji tertinggi", atas, "#059669"),
+                ("15 pekerjaan dengan median gaji terendah", bawah, "#DC2626")]:
+            fig = px.bar(sub.sort_values("median"), x="median", y="pekerjaan",
+                         orientation="h", height=30 * len(sub) + 150,
+                         color_discrete_sequence=[warna],
+                         hover_data={"count": True, "p25": ":,.0f", "p75": ":,.0f"},
+                         labels={"median": "Median Gaji (Rp per bulan)",
+                                 "pekerjaan": "Pekerjaan", "count": "Jumlah lowongan"},
+                         title=judul)
+            fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("Bandingkan sebaran gaji antar pekerjaan")
+        opsi = g.sort_values("count", ascending=False).pekerjaan.tolist()
+        pilih = st.multiselect("Pilih pekerjaan (bisa lebih dari satu)", opsi,
+                               default=opsi[:6], key="gaji_banding")
+        if pilih:
+            box = d[d.pekerjaan.isin(pilih)]
+            fig = px.box(box, x="gaji", y="pekerjaan",
+                         color="pekerjaan",
+                         color_discrete_map=get_qualitative_color_map(pilih, "Dark24"),
+                         height=44 * len(pilih) + 180,
+                         labels={"gaji": "Gaji (Rp per bulan)", "pekerjaan": "Pekerjaan"})
+            fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption("Diagram kotak memperlihatkan rentang gaji di dalam satu "
+                      "pekerjaan, bukan hanya nilai tengahnya. Kotak yang lebar berarti "
+                      "tawaran antar perusahaan untuk pekerjaan yang sama sangat beragam.")
+
+        st.subheader("Tabel lengkap")
+        cari = st.text_input("Cari pekerjaan tertentu", key="gaji_cari")
+        tab = g.sort_values("median", ascending=False)
+        if cari:
+            tab = tab[tab.pekerjaan.str.contains(cari, case=False, na=False)]
+        if tab.empty:
+            st.info(f"Tidak ada pekerjaan yang cocok dengan '{cari}'.")
+        else:
+            tampil = tab.copy()
+            for kol in ("median", "p25", "p75"):
+                tampil[kol] = tampil[kol].map(rp)
+            st.dataframe(tampil[["pekerjaan", "median", "p25", "p75", "count"]].rename(
+                columns={"pekerjaan": "Pekerjaan", "median": "Median Gaji",
+                         "p25": "Persentil 25", "p75": "Persentil 75",
+                         "count": "Jumlah Lowongan"}),
+                use_container_width=True, hide_index=True)
+            st.caption("Persentil 25 dan 75 menunjukkan rentang tawaran yang lazim: "
+                      "separuh lowongan untuk pekerjaan tersebut berada di antara "
+                      "kedua angka itu.")
+
+
 def page_skill_gap():
     st.title("🎯 Occupation-Specific Skills")
     st.caption("Membandingkan seberapa besar porsi suatu skill di SATU pekerjaan "
@@ -1303,6 +1505,7 @@ PAGES = {
     "Jenjang Pendidikan & Bidang Studi": page_education,
     "Skill yang Sering Muncul Bersama": page_cooccurrence,
     "Tren Permintaan Skill": page_trends,
+    "Gaji yang Ditawarkan": page_salary,
     "Occupation-Specific Skills": page_skill_gap,
 }
 
