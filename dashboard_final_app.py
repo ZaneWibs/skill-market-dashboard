@@ -324,6 +324,42 @@ for lbl, clr in ESCUDERO_BROAD_COLORS.items():
     st.sidebar.markdown(
         f'<span style="color:{clr}; font-size:1.2em;">●</span> {lbl}',
         unsafe_allow_html=True)
+# ----------------------------------------------------------------------------
+# (v15) Panel diagnostik sumber data.
+# Dashboard mencari file DB secara otomatis, sehingga bisa saja mengambil
+# salinan LAMA yang kebetulan tertinggal di folder kerja. Panel ini menampilkan
+# file mana yang benar-benar sedang dibaca, kapan terakhir diubah, dan apakah
+# koreksi manual pembimbing sudah ada di dalamnya.
+# ----------------------------------------------------------------------------
+st.sidebar.markdown("---")
+with st.sidebar.expander("🗄️ Sumber data yang sedang dipakai", expanded=False):
+    _abs = _os.path.abspath(DB_PATH)
+    _kolom = q("SELECT * FROM jobs LIMIT 1").columns.tolist()
+    _n_job = q("SELECT COUNT(*) n FROM jobs").n[0]
+    _n_unc = q("""SELECT COUNT(*) n FROM jobs
+                  WHERE kbji_golongan_pokok_nama='Tidak Terklasifikasi'""").n[0]
+    st.caption(f"**Berkas:** `{_abs}`")
+    if _os.path.exists(DB_PATH):
+        from datetime import datetime as _dt
+        _mt = _dt.fromtimestamp(_os.path.getmtime(DB_PATH)).strftime("%d %b %Y %H:%M")
+        _mb = _os.path.getsize(DB_PATH) / 1024 / 1024
+        st.caption(f"**Terakhir diubah:** {_mt}  ·  {_mb:.1f} MB")
+    st.caption(f"**Lowongan:** {_n_job:,}  ·  **Tidak terklasifikasi:** {_n_unc:,}")
+
+    _lain = sorted(set(_glob("**/*ner_jobposting*.sqlite", recursive=True)))
+    if len(_lain) > 1:
+        st.caption("Berkas serupa lain yang ditemukan (TIDAK dipakai):")
+        for _f in _lain:
+            if _os.path.abspath(_f) != _abs:
+                st.caption(f"· `{_os.path.abspath(_f)}`")
+
+if "kbji_source" not in q("SELECT * FROM jobs LIMIT 1").columns.tolist():
+    st.sidebar.error(
+        "⚠️ Basis data ini BELUM memuat koreksi manual pembimbing. "
+        "Jalankan `python kbji_override.py <berkas.sqlite>` lebih dulu, lalu pastikan "
+        "dashboard membaca berkas hasilnya. Buka panel 'Sumber data yang sedang dipakai' "
+        "di atas untuk melihat berkas mana yang sedang terbaca.")
+
 st.sidebar.markdown("**🗂️ Legenda Jabatan KBJI**")
 with st.sidebar.expander("Lihat semua warna jabatan"):
     for lbl, clr in KBJI_COLORS.items():
