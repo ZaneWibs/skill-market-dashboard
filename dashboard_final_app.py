@@ -1209,28 +1209,12 @@ def page_salary():
                 "ALL_batches_gold_annotations.json`")
         return
 
-    st.info(
-        "**Sumber data.** Angka pada halaman ini berasal dari field terstruktur "
-        "`salary_min`/`salary_max` pada metadata lowongan, **bukan** dari keluaran "
-        "model NER. Entitas SALARY hasil model hanya terdeteksi pada 143 lowongan "
-        "(2,8% korpus) dan masih berupa teks bebas yang belum ternormalisasi. "
-        "Halaman ini karenanya merupakan analisis deskriptif atas metadata lowongan.")
+    cakup = q("""SELECT COUNT(*) total, SUM(salary_min IS NOT NULL) ada FROM jobs""")
+    total, ada = int(cakup.total[0]), int(cakup.ada[0])
 
-    cakup = q("""SELECT COUNT(*) total,
-                        SUM(salary_min IS NOT NULL) ada,
-                        SUM(COALESCE(salary_wajar,0)=1) wajar FROM jobs""")
-    total, ada, wajar = int(cakup.total[0]), int(cakup.ada[0]), int(cakup.wajar[0])
-
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.metric("Lowongan mencantumkan gaji", f"{ada:,}", f"{ada/total:.1%} dari korpus")
-    c2.metric("Dipakai untuk analisis", f"{wajar:,}", f"{wajar/total:.1%} dari korpus")
-    c3.metric("Tanpa informasi gaji", f"{total-ada:,}", f"{(total-ada)/total:.1%}")
-
-    st.caption(
-        f"{ada - wajar} lowongan dikeluarkan dari analisis karena angkanya di luar "
-        "rentang upah bulanan yang wajar (di bawah Rp1 juta atau di atas Rp100 juta). "
-        "Hampir semuanya bukan upah bulanan — misalnya upah harian, honor per artikel, "
-        "atau uang saku magang — sehingga akan menarik turun median bila diikutkan.")
+    c2.metric("Tanpa informasi gaji", f"{total-ada:,}", f"{(total-ada)/total:.1%}")
 
     pakai_max = st.radio(
         "Angka yang dianalisis", ["Batas bawah (salary_min)", "Titik tengah rentang"],
@@ -1240,7 +1224,7 @@ def page_salary():
     kolom_gaji = ("salary_min" if pakai_max.startswith("Batas bawah")
                   else "((salary_min + COALESCE(salary_max, salary_min)) / 2.0)")
 
-    FILTER = "WHERE COALESCE(salary_wajar,0)=1"
+    FILTER = "WHERE salary_min IS NOT NULL"
 
     def rp(x):
         return f"Rp{x:,.0f}".replace(",", ".")
@@ -1272,7 +1256,7 @@ def page_salary():
         st.subheader("Menurut jenjang pendidikan yang diminta")
         edu = q(f"""SELECT e.text AS jenjang, {kolom_gaji} AS gaji FROM jobs j
                     JOIN entities e ON e.job_id=j.id AND e.label='EDUCATION_LEVEL'
-                    WHERE COALESCE(j.salary_wajar,0)=1""")
+                    WHERE j.salary_min IS NOT NULL""")
         if not edu.empty:
             g = (edu.groupby("jenjang")["gaji"]
                  .agg(["median", "count"]).reset_index()
