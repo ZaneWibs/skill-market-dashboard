@@ -290,7 +290,7 @@ page = st.sidebar.radio("Halaman", [
     "Jenjang Pendidikan & Bidang Studi",
     "Skill yang Sering Muncul Bersama",
     "Tren Permintaan Skill",
-    "Analisis Kesenjangan Skill",
+    "Occupation-specific Skills",
 ])
 
 # (v14) Filter global UTAMA sekarang berdasarkan kategori luas Escudero
