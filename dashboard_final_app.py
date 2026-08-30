@@ -1200,6 +1200,8 @@ def page_trends():
 
 
 def page_salary():
+    import math
+
     st.title("💰 Gaji yang Ditawarkan")
 
     _kol = q("SELECT * FROM jobs LIMIT 1").columns.tolist()
@@ -1245,7 +1247,6 @@ def page_salary():
 
     def sumbu_rupiah(fig, sumbu="x", vmaks=None):
         """Ganti penanda sumbu gaji menjadi format Indonesia."""
-        import math
         vmaks = vmaks or 1
         langkah = 500_000 if vmaks <= 6_000_000 else (
             1_000_000 if vmaks <= 15_000_000 else 5_000_000)
@@ -1272,14 +1273,21 @@ def page_salary():
                   "karena sebaran gaji menjulur ke kanan: sedikit lowongan bergaji "
                   "sangat tinggi menarik rata-rata ke atas.")
 
-        fig = px.histogram(d, x="gaji", nbins=60,
+        batas_h = math.ceil(float(s.quantile(0.99)) / 1_000_000) * 1_000_000
+        fig = px.histogram(d[d.gaji <= batas_h], x="gaji", nbins=60,
                            color_discrete_sequence=["#6366F1"],
                            labels={"gaji": "Gaji (Rp per bulan)", "count": "Jumlah Lowongan"},
                            title="Sebaran gaji yang ditawarkan")
         fig.add_vline(x=s.median(), line_dash="dash", line_color="#DC2626",
                       annotation_text=f"Median {rp(s.median())}")
-        sumbu_rupiah(fig, "x", s.max())
+        sumbu_rupiah(fig, "x", batas_h)
+        fig.update_xaxes(range=[0, batas_h])
         st.plotly_chart(fig, use_container_width=True)
+        n_luar = int((s > batas_h).sum())
+        if n_luar:
+            st.caption(f"Sumbu dipangkas pada {rp(batas_h)} (persentil 99); "
+                      f"{n_luar} lowongan bergaji di atas itu tidak tergambar, "
+                      "tetapi tetap ikut dalam perhitungan seluruh statistik di atas.")
 
         st.subheader("Menurut jenjang pendidikan yang diminta")
         edu = q(f"""SELECT e.text AS jenjang, {kolom_gaji} AS gaji FROM jobs j
@@ -1324,16 +1332,31 @@ def page_salary():
             st.plotly_chart(fig, use_container_width=True)
 
             box = d[d.jabatan.isin(g.jabatan)]
+            # Sumbu dipangkas di persentil 99. Tanpa ini, dua lowongan bergaji
+            # Rp45-50 juta merentangkan sumbu sampai 50jt dan menjepit 99,95%
+            # data ke seperlima kiri grafik sehingga kotaknya tak terbaca.
+            batas = max(1_000_000, float(box.gaji.quantile(0.99)))
+            batas = math.ceil(batas / 1_000_000) * 1_000_000
+            di_luar = int((box.gaji > batas).sum())
+            # Urutan kategori disamakan dengan grafik batang di atas (median menaik).
+            urut = g.sort_values("median").jabatan.tolist()
             fig2 = px.box(box, x="gaji", y="jabatan", color="jabatan",
-                          color_discrete_map=KBJI_COLORS, height=42 * len(g) + 180,
+                          color_discrete_map=KBJI_COLORS, height=46 * len(g) + 200,
+                          category_orders={"jabatan": urut},
                           labels={"gaji": "Gaji (Rp per bulan)", "jabatan": "Jabatan"},
                           title="Sebaran gaji dalam tiap jabatan")
             fig2.update_yaxes(tickmode="linear", dtick=1, automargin=True)
-            fig2.update_layout(showlegend=False)
-            sumbu_rupiah(fig2, "x", box.gaji.max())
+            fig2.update_layout(showlegend=False, margin=dict(t=70))
+            sumbu_rupiah(fig2, "x", batas)
+            fig2.update_xaxes(range=[0, batas])
             st.plotly_chart(fig2, use_container_width=True)
-            st.caption("Diagram kotak memperlihatkan bahwa rentang gaji DI DALAM satu "
-                      "jabatan sering lebih lebar daripada selisih ANTAR jabatan.")
+            ket = ("Diagram kotak memperlihatkan bahwa rentang gaji DI DALAM satu "
+                  "jabatan sering lebih lebar daripada selisih ANTAR jabatan.")
+            if di_luar:
+                ket += (f" Sumbu dipangkas pada {rp(batas)} (persentil 99); "
+                       f"{di_luar} lowongan bergaji di atas itu tidak tergambar, "
+                       "tetapi tetap ikut dalam perhitungan median dan kuartil.")
+            st.caption(ket)
 
             tampil = g.copy()
             tampil["median"] = tampil["median"].map(rp)
@@ -1383,14 +1406,21 @@ def page_salary():
                                default=opsi[:6], key="gaji_banding")
         if pilih:
             box = d[d.pekerjaan.isin(pilih)]
+            batas = max(1_000_000, float(box.gaji.quantile(0.99)))
+            batas = math.ceil(batas / 1_000_000) * 1_000_000
+            di_luar = int((box.gaji > batas).sum())
+            urut = (box.groupby("pekerjaan").gaji.median()
+                    .sort_values().index.tolist())
             fig = px.box(box, x="gaji", y="pekerjaan",
                          color="pekerjaan",
                          color_discrete_map=get_qualitative_color_map(pilih, "Dark24"),
-                         height=44 * len(pilih) + 180,
+                         height=46 * len(pilih) + 200,
+                         category_orders={"pekerjaan": urut},
                          labels={"gaji": "Gaji (Rp per bulan)", "pekerjaan": "Pekerjaan"})
             fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
-            fig.update_layout(showlegend=False)
-            sumbu_rupiah(fig, "x", box.gaji.max())
+            fig.update_layout(showlegend=False, margin=dict(t=40))
+            sumbu_rupiah(fig, "x", batas)
+            fig.update_xaxes(range=[0, batas])
             st.plotly_chart(fig, use_container_width=True)
             st.caption("Diagram kotak memperlihatkan rentang gaji di dalam satu "
                       "pekerjaan, bukan hanya nilai tengahnya. Kotak yang lebar berarti "
