@@ -290,7 +290,7 @@ page = st.sidebar.radio("Halaman", [
     "Jenjang Pendidikan & Bidang Studi",
     "Skill yang Sering Muncul Bersama",
     "Tren Permintaan Skill",
-    "Occupation-specific Skills",
+    "Occupation-Specific Skills",
 ])
 
 # (v14) Filter global UTAMA sekarang berdasarkan kategori luas Escudero
@@ -1119,7 +1119,7 @@ def page_trends():
 
 
 def page_skill_gap():
-    st.title("🎯 Occupation-specific Skills")
+    st.title("🎯 Occupation-Specific Skills")
     st.caption("Membandingkan seberapa besar porsi suatu skill di SATU jabatan "
               "dibandingkan porsinya di SELURUH pasar kerja.")
 
@@ -1150,11 +1150,11 @@ lebih menonjol pada jabatan ini daripada rata-rata pasar.*
   dibanding pasar umum.
 
 **Peringatan penting saat menafsirkan.**
-1. Ini mengukur **kekhasan**, bukan **kekurangan tenaga kerja**. "Kesenjangan"
-   di sini adalah selisih antara jabatan dan pasar pada sisi *permintaan* saja.
-   Untuk menyimpulkan adanya kesenjangan keterampilan yang sesungguhnya,
-   diperlukan data sisi *penawaran* (mis. profil lulusan), yang tidak tersedia
-   dalam data lowongan ini.
+1. Halaman ini mengukur **kekhasan skill terhadap jabatan**, bukan kekurangan
+   tenaga kerja. Selisih yang ditampilkan sepenuhnya berada di sisi *permintaan*
+   (lowongan kerja). Untuk menyimpulkan adanya kesenjangan keterampilan
+   (*skill gap*) yang sesungguhnya, diperlukan pula data sisi *penawaran*
+   seperti profil lulusan, yang tidak tersedia dalam data lowongan ini.
 2. Angkanya adalah **pangsa relatif**, bukan persentase lowongan. Bila satu
    lowongan menyebut 10 skill, tiap skill menyumbang 1/10 pada penyebutnya.
 3. Jabatan dengan jumlah lowongan sedikit menghasilkan pangsa yang tidak stabil —
@@ -1228,7 +1228,7 @@ PAGES = {
     "Jenjang Pendidikan & Bidang Studi": page_education,
     "Skill yang Sering Muncul Bersama": page_cooccurrence,
     "Tren Permintaan Skill": page_trends,
-    "Occupation-specific Skills": page_skill_gap,
+    "Occupation-Specific Skills": page_skill_gap,
 }
 
 try:
