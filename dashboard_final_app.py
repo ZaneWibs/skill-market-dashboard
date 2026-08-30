@@ -1119,7 +1119,7 @@ def page_trends():
 
 
 def page_skill_gap():
-    st.title("🎯 Analisis Kesenjangan Skill")
+    st.title("🎯 Occupation-specific Skills")
     st.caption("Membandingkan seberapa besar porsi suatu skill di SATU jabatan "
               "dibandingkan porsinya di SELURUH pasar kerja.")
 
@@ -1228,7 +1228,7 @@ PAGES = {
     "Jenjang Pendidikan & Bidang Studi": page_education,
     "Skill yang Sering Muncul Bersama": page_cooccurrence,
     "Tren Permintaan Skill": page_trends,
-    "Analisis Kesenjangan Skill": page_skill_gap,
+    "Occupation-specific Skills": page_skill_gap,
 }
 
 try:
