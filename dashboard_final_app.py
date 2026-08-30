@@ -368,6 +368,18 @@ with st.sidebar.expander("🗄️ Sumber data yang sedang dipakai", expanded=Fal
         st.caption(f"**Terakhir diubah:** {_mt}  ·  {_mb:.1f} MB")
     st.caption(f"**Lowongan:** {_n_job:,}  ·  **Tidak terklasifikasi:** {_n_unc:,}")
 
+    if "kbji_source" in _kolom:
+        _n_man = q("""SELECT COUNT(*) n FROM jobs
+                      WHERE kbji_source IN ('manual_review','telaah_pembimbing')""").n[0]
+        if _n_man:
+            st.caption(f"**Dikoreksi/ditetapkan manual:** {_n_man:,} lowongan "
+                      "(lihat `kbji_override.py` dan `kbji_telaah_pembimbing.py`)")
+    if "kbji_ditangguhkan" in _kolom:
+        _n_tg = q("SELECT COUNT(*) n FROM jobs WHERE COALESCE(kbji_ditangguhkan,0)=1").n[0]
+        if _n_tg:
+            st.caption(f"**Ditangguhkan:** {_n_tg:,} lowongan, disembunyikan dari halaman "
+                      "Klasifikasi Jabatan karena tautan aslinya sudah mati")
+
     _lain = sorted(set(_glob("**/*ner_jobposting*.sqlite", recursive=True)))
     if len(_lain) > 1:
         st.caption("Berkas serupa lain yang ditemukan (TIDAK dipakai):")
@@ -526,20 +538,6 @@ def page_kbji_classification():
     c2.metric("Tidak terklasifikasi", f"{n_unclass:,}",
              f"{n_unclass / dist.n.sum():.1%}" if dist.n.sum() else "0%")
     c3.metric("Rata-rata confidence", f"{(dist.n * dist.conf_rata).sum() / dist.n.sum():.2f}")
-
-    if "kbji_source" in _kolom_jobs:
-        _man = q("""SELECT COUNT(*) n FROM jobs
-                    WHERE kbji_source IN ('manual_review','telaah_pembimbing')""").n[0]
-        if _man:
-            st.info(f"{_man} lowongan telah dikoreksi atau ditetapkan manual berdasarkan "
-                   "telaah pembimbing (lihat `kbji_override.py` dan "
-                   "`kbji_telaah_pembimbing.py` untuk daftar lengkap beserta alasannya). "
-                   "Sisanya hasil klasifikasi otomatis.")
-    if n_tangguh:
-        st.warning(f"{n_tangguh} lowongan ditangguhkan dan tidak ditampilkan di halaman ini "
-                  "karena tautan aslinya sudah tidak dapat diakses, sehingga jabatannya "
-                  "belum dapat dipastikan. Barisnya tetap tersimpan di database dan tetap "
-                  "ikut dihitung pada halaman analisis skill.")
 
     st.subheader("Distribusi Lowongan per Jabatan")
     st.plotly_chart(px.bar(dist, x="jabatan", y="n", color="jabatan",
