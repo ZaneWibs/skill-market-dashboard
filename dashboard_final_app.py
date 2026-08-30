@@ -225,13 +225,35 @@ st.set_page_config(page_title="Skill Market Dashboard", layout="wide",
 
 
 @st.cache_resource
-def get_conn(path):
+def get_conn(path, sidik=None):
+    # 'sidik' membuat koneksi dibuat ulang saat berkas database berganti.
     return sqlite3.connect(path, check_same_thread=False)
 
 
+def _sidik_db():
+    """Sidik jari berkas database: (ukuran, waktu ubah).
+
+    Nilai ini ikut menjadi bagian kunci cache. Tanpa ini, mengganti berkas
+    .sqlite TIDAK membuat tampilan berubah, karena Streamlit menganggap
+    query yang sama pasti berhasil yang sama -- inilah sebab perubahan
+    database sempat tidak muncul di dashboard.
+    """
+    try:
+        st_ = _os.stat(DB_PATH)
+        return (st_.st_size, int(st_.st_mtime))
+    except OSError:
+        return (0, 0)
+
+
 @st.cache_data
+def _q_cached(sql, params, sidik):
+    # 'sidik' tidak dipakai di dalam badan fungsi; keberadaannya semata-mata
+    # untuk membatalkan cache ketika berkas database berganti.
+    return pd.read_sql(sql, get_conn(DB_PATH, sidik), params=params)
+
+
 def q(sql, params=()):
-    return pd.read_sql(sql, get_conn(DB_PATH), params=params)
+    return _q_cached(sql, params, _sidik_db())
 
 
 def relabel(df, col="label"):
@@ -359,6 +381,12 @@ if "kbji_source" not in q("SELECT * FROM jobs LIMIT 1").columns.tolist():
         "Jalankan `python kbji_override.py <berkas.sqlite>` lebih dulu, lalu pastikan "
         "dashboard membaca berkas hasilnya. Buka panel 'Sumber data yang sedang dipakai' "
         "di atas untuk melihat berkas mana yang sedang terbaca.")
+
+if st.sidebar.button("🔄 Muat ulang data", use_container_width=True,
+                     help="Kosongkan cache dan baca ulang berkas database."):
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.rerun()
 
 st.sidebar.markdown("**🗂️ Legenda Jabatan KBJI**")
 with st.sidebar.expander("Lihat semua warna jabatan"):
@@ -975,7 +1003,7 @@ def page_education():
 
 
 @st.cache_data
-def cooccurrence(broad_sql, min_count):
+def cooccurrence(broad_sql, min_count, _sidik=None):
     rows = q(f"""SELECT js.job_id, s.name FROM job_skills js
                  JOIN skills s ON s.id=js.skill_id WHERE s.escudero_broad_category IN {broad_sql}""")
     pair = Counter()
@@ -991,7 +1019,7 @@ def page_cooccurrence():
     st.title("🔗 Skill yang Sering Muncul Bersama")
     st.caption("Pasangan skill yang sering muncul bersama dalam satu lowongan.")
     min_c = st.slider("Minimal kemunculan bersama", 2, 50, 10)
-    df = cooccurrence(label_sql, min_c).head(40)
+    df = cooccurrence(label_sql, min_c, _sidik_db()).head(40)
     if df.empty:
         st.info("Tidak ada pasangan yang memenuhi ambang. Turunkan nilainya.")
     else:
@@ -1021,7 +1049,7 @@ TREN_MIN_LOWONGAN_PER_BULAN = 50
 
 
 @st.cache_data
-def bulan_valid():
+def bulan_valid(_sidik=None):
     """Bulan yang punya cukup lowongan untuk dianalisis trennya."""
     d = q("""SELECT substr(posted_date,1,7) bulan, COUNT(*) n FROM jobs
              WHERE posted_date NOT IN ('','None') GROUP BY bulan ORDER BY bulan""")
@@ -1033,7 +1061,7 @@ def bulan_valid():
 def page_trends():
     st.title("📈 Tren Permintaan Skill")
 
-    bv = bulan_valid()
+    bv = bulan_valid(_sidik_db())
     if bv.empty:
         st.warning("Tidak ada bulan dengan cakupan data memadai.")
         return
