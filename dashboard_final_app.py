@@ -1389,8 +1389,13 @@ def page_salary():
             st.info("Tidak ada pekerjaan yang memenuhi ambang. Turunkan nilainya.")
             return
 
-        st.caption(f"{len(g):,} pekerjaan memenuhi ambang minimal {min_n} lowongan, "
-                  f"mencakup {int(g['count'].sum()):,} lowongan bergaji.")
+        n_semua = d.pekerjaan.nunique()
+        st.caption(
+            f"**{len(g):,} pekerjaan** memenuhi ambang minimal {min_n} lowongan, "
+            f"mencakup {int(g['count'].sum()):,} lowongan bergaji. "
+            f"Sisanya, {n_semua - len(g):,} judul pekerjaan lain, tidak ditampilkan "
+            "karena jumlah lowongannya terlalu sedikit untuk menghasilkan median yang "
+            "stabil — turunkan slider di atas bila ingin memasukkannya.")
 
         atas = g.nlargest(15, "median")
         bawah = g.nsmallest(15, "median")
@@ -1435,12 +1440,19 @@ def page_salary():
                       "tawaran antar perusahaan untuk pekerjaan yang sama sangat beragam.")
 
         st.subheader("Tabel lengkap")
-        cari = st.text_input("Cari pekerjaan tertentu", key="gaji_cari")
+        pilih_tabel = st.multiselect(
+            "Cari pekerjaan tertentu",
+            g.sort_values("median", ascending=False).pekerjaan.tolist(),
+            key="gaji_cari",
+            placeholder="Ketik untuk mencari, atau biarkan kosong untuk menampilkan semua",
+            help="Daftar ini hanya memuat pekerjaan yang lolos ambang jumlah lowongan "
+                 "minimal di atas. Turunkan ambangnya bila pekerjaan yang dicari "
+                 "belum muncul.")
         tab = g.sort_values("median", ascending=False)
-        if cari:
-            tab = tab[tab.pekerjaan.str.contains(cari, case=False, na=False)]
+        if pilih_tabel:
+            tab = tab[tab.pekerjaan.isin(pilih_tabel)]
         if tab.empty:
-            st.info(f"Tidak ada pekerjaan yang cocok dengan '{cari}'.")
+            st.info("Tidak ada pekerjaan yang cocok.")
         else:
             tampil = tab.copy()
             for kol in ("median", "p25", "p75"):
@@ -1449,10 +1461,13 @@ def page_salary():
                 columns={"pekerjaan": "Pekerjaan", "median": "Median Gaji",
                          "p25": "Persentil 25", "p75": "Persentil 75",
                          "count": "Jumlah Lowongan"}),
-                use_container_width=True, hide_index=True)
-            st.caption("Persentil 25 dan 75 menunjukkan rentang tawaran yang lazim: "
-                      "separuh lowongan untuk pekerjaan tersebut berada di antara "
-                      "kedua angka itu.")
+                use_container_width=True, hide_index=True, height=420)
+            st.caption(
+                f"Menampilkan {len(tab):,} dari {len(g):,} pekerjaan yang lolos ambang "
+                f"minimal {min_n} lowongan. Tabel dapat digulir; klik judul kolom untuk "
+                "mengurutkan. Persentil 25 dan 75 menunjukkan rentang tawaran yang "
+                "lazim: separuh lowongan untuk pekerjaan tersebut berada di antara "
+                "kedua angka itu.")
 
 
 def page_skill_gap():
