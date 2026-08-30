@@ -1253,8 +1253,16 @@ def page_salary():
         atas = math.ceil(vmaks / langkah) * langkah + langkah
         nilai = list(range(0, int(atas), langkah))
         opsi = dict(tickmode="array", tickvals=nilai,
-                    ticktext=[label_singkat(v) for v in nilai])
+                    ticktext=[label_singkat(v) for v in nilai],
+                    # hoverformat mengatur angka pada kotak keterangan saat kursor
+                    # diarahkan. Tanpa ini Plotly menulis '50M' (million), bukan
+                    # angka penuh bergaya Indonesia.
+                    hoverformat=",.0f")
         (fig.update_xaxes if sumbu == "x" else fig.update_yaxes)(**opsi)
+        # separators=",." menetapkan koma sebagai pemisah desimal dan titik
+        # sebagai pemisah ribuan, sesuai kaidah bahasa Indonesia. Berlaku untuk
+        # seluruh angka pada gambar ini, termasuk tooltip.
+        fig.update_layout(separators=",.")
         return fig
 
     tab1, tab2, tab3 = st.tabs(
@@ -1276,12 +1284,12 @@ def page_salary():
         batas_h = math.ceil(float(s.quantile(0.99)) / 1_000_000) * 1_000_000
         fig = px.histogram(d[d.gaji <= batas_h], x="gaji", nbins=60,
                            color_discrete_sequence=["#6366F1"],
-                           labels={"gaji": "Gaji (Rp per bulan)", "count": "Jumlah Lowongan"},
+                           labels={"gaji": "Gaji", "count": "Jumlah Lowongan"},
                            title="Sebaran gaji yang ditawarkan")
         fig.add_vline(x=s.median(), line_dash="dash", line_color="#DC2626",
                       annotation_text=f"Median {rp(s.median())}")
         sumbu_rupiah(fig, "x", batas_h)
-        fig.update_xaxes(range=[0, batas_h])
+        fig.update_xaxes(range=[0, batas_h], title_text="Gaji (Rp per bulan)")
         st.plotly_chart(fig, use_container_width=True)
         n_luar = int((s > batas_h).sum())
         if n_luar:
@@ -1343,12 +1351,12 @@ def page_salary():
             fig2 = px.box(box, x="gaji", y="jabatan", color="jabatan",
                           color_discrete_map=KBJI_COLORS, height=46 * len(g) + 200,
                           category_orders={"jabatan": urut},
-                          labels={"gaji": "Gaji (Rp per bulan)", "jabatan": "Jabatan"},
+                          labels={"gaji": "Gaji", "jabatan": "Jabatan"},
                           title="Sebaran gaji dalam tiap jabatan")
             fig2.update_yaxes(tickmode="linear", dtick=1, automargin=True)
             fig2.update_layout(showlegend=False, margin=dict(t=70))
             sumbu_rupiah(fig2, "x", batas)
-            fig2.update_xaxes(range=[0, batas])
+            fig2.update_xaxes(range=[0, batas], title_text="Gaji (Rp per bulan)")
             st.plotly_chart(fig2, use_container_width=True)
             ket = ("Diagram kotak memperlihatkan bahwa rentang gaji DI DALAM satu "
                   "jabatan sering lebih lebar daripada selisih ANTAR jabatan.")
@@ -1416,11 +1424,11 @@ def page_salary():
                          color_discrete_map=get_qualitative_color_map(pilih, "Dark24"),
                          height=46 * len(pilih) + 200,
                          category_orders={"pekerjaan": urut},
-                         labels={"gaji": "Gaji (Rp per bulan)", "pekerjaan": "Pekerjaan"})
+                         labels={"gaji": "Gaji", "pekerjaan": "Pekerjaan"})
             fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
             fig.update_layout(showlegend=False, margin=dict(t=40))
             sumbu_rupiah(fig, "x", batas)
-            fig.update_xaxes(range=[0, batas])
+            fig.update_xaxes(range=[0, batas], title_text="Gaji (Rp per bulan)")
             st.plotly_chart(fig, use_container_width=True)
             st.caption("Diagram kotak memperlihatkan rentang gaji di dalam satu "
                       "pekerjaan, bukan hanya nilai tengahnya. Kotak yang lebar berarti "
