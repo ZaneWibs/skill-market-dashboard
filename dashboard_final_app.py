@@ -86,7 +86,7 @@ ESCUDERO_SUB_COLORS = {
 }
 
 # ----------------------------------------------------------------------------
-# (v14) Klasifikasi Pekerjaan ke Golongan Pokok KBJI 2014 (Bagian 8d notebook).
+# (v14) Klasifikasi Pekerjaan ke Jabatan KBJI 2014 (Bagian 8d notebook).
 # "Tidak Terklasifikasi" = judul pekerjaan yang tidak match referensi manapun
 # dengan confidence memadai -- ditampilkan apa adanya, bukan disembunyikan.
 # ----------------------------------------------------------------------------
@@ -280,7 +280,7 @@ st.sidebar.title("🔎 Skill Market")
 page = st.sidebar.radio("Halaman", [
     "Ringkasan",
     "Jumlah Lowongan per Pekerjaan",
-    "Klasifikasi Pekerjaan (KBJI 2014)",
+    "Klasifikasi Jabatan (KBJI 2014)",
     "Skill per Pekerjaan",
     "Detail Kebutuhan per Pekerjaan",
     "Lokasi & Pekerjaan",
@@ -324,8 +324,8 @@ for lbl, clr in ESCUDERO_BROAD_COLORS.items():
     st.sidebar.markdown(
         f'<span style="color:{clr}; font-size:1.2em;">●</span> {lbl}',
         unsafe_allow_html=True)
-st.sidebar.markdown("**🗂️ Legenda Golongan Pokok KBJI**")
-with st.sidebar.expander("Lihat semua warna golongan"):
+st.sidebar.markdown("**🗂️ Legenda Jabatan KBJI**")
+with st.sidebar.expander("Lihat semua warna jabatan"):
     for lbl, clr in KBJI_COLORS.items():
         st.markdown(
             f'<span style="color:{clr}; font-size:1.1em;">●</span> {lbl}',
@@ -431,24 +431,24 @@ def page_job_title_summary():
 
 
 def page_kbji_classification():
-    st.title("🗂️ Klasifikasi Pekerjaan (KBJI 2014)")
-    st.caption("Setiap judul Pekerjaan diklasifikasikan ke salah satu dari 9 Golongan Pokok "
+    st.title("🗂️ Klasifikasi Jabatan (KBJI 2014)")
+    st.caption("Setiap judul pekerjaan dikelompokkan ke salah satu dari 9 jabatan "
               "KBJI 2014 (kode 1-9; TNI/POLRI dikecualikan). Metode: lexicon → fuzzy → k-NN "
               "embedding terhadap 2.155 nama pekerjaan riil dari dokumen KBJI. Lihat Bagian 8d "
               "pada notebook untuk detail metodologi.")
 
-    dist = q("""SELECT kbji_golongan_pokok_nama AS golongan, COUNT(*) n,
+    dist = q("""SELECT kbji_golongan_pokok_nama AS jabatan, COUNT(*) n,
                        AVG(kbji_confidence) conf_rata
-                FROM jobs GROUP BY golongan ORDER BY n DESC""")
-    dist["golongan"] = pd.Categorical(dist["golongan"],
-                                      categories=[g for g in KBJI_ORDER if g in dist.golongan.values],
+                FROM jobs GROUP BY jabatan ORDER BY n DESC""")
+    dist["jabatan"] = pd.Categorical(dist["jabatan"],
+                                      categories=[g for g in KBJI_ORDER if g in dist.jabatan.values],
                                       ordered=True)
-    dist = dist.sort_values("golongan")
+    dist = dist.sort_values("jabatan")
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Total lowongan", f"{dist.n.sum():,}")
-    n_unclass = int(dist.loc[dist.golongan == "Tidak Terklasifikasi", "n"].sum()) \
-        if "Tidak Terklasifikasi" in dist.golongan.values else 0
+    n_unclass = int(dist.loc[dist.jabatan == "Tidak Terklasifikasi", "n"].sum()) \
+        if "Tidak Terklasifikasi" in dist.jabatan.values else 0
     c2.metric("Tidak terklasifikasi", f"{n_unclass:,}",
              f"{n_unclass / dist.n.sum():.1%}" if dist.n.sum() else "0%")
     c3.metric("Rata-rata confidence", f"{(dist.n * dist.conf_rata).sum() / dist.n.sum():.2f}")
@@ -461,17 +461,17 @@ def page_kbji_classification():
                    "(lihat `kbji_override.py` untuk daftar koreksi beserta alasannya). "
                    "Sisanya hasil klasifikasi otomatis.")
 
-    st.subheader("Distribusi Lowongan per Golongan Pokok")
-    st.plotly_chart(px.bar(dist, x="golongan", y="n", color="golongan",
+    st.subheader("Distribusi Lowongan per Jabatan")
+    st.plotly_chart(px.bar(dist, x="jabatan", y="n", color="jabatan",
                     color_discrete_map=KBJI_COLORS,
-                    labels={"golongan": "Golongan Pokok", "n": "Jumlah Lowongan"}),
+                    labels={"jabatan": "Jabatan", "n": "Jumlah Lowongan"}),
                     use_container_width=True)
 
-    tab1, tab2 = st.tabs(["Jelajah per Golongan", "Kualitas Klasifikasi (QA)"])
+    tab1, tab2 = st.tabs(["Jelajah per Jabatan", "Kualitas Klasifikasi (QA)"])
 
     with tab1:
-        pilihan = [g for g in KBJI_ORDER if g in dist.golongan.values]
-        pick = st.selectbox("Pilih golongan pokok", pilihan)
+        pilihan = [g for g in KBJI_ORDER if g in dist.jabatan.values]
+        pick = st.selectbox("Pilih jabatan", pilihan)
         df = q("""SELECT title AS pekerjaan, COUNT(*) n, AVG(kbji_confidence) conf
                  FROM jobs WHERE kbji_golongan_pokok_nama = ?
                  GROUP BY title ORDER BY n DESC""", (pick,))
@@ -482,7 +482,7 @@ def page_kbji_classification():
                       height=30 * len(_top) + 150,
                       color_discrete_sequence=[KBJI_COLORS.get(pick, "#6366F1")],
                       labels={"n": "Jumlah Lowongan", "pekerjaan": "Pekerjaan"},
-                      title=f"Pekerjaan teratas dalam golongan '{pick}'")
+                      title=f"Pekerjaan teratas dalam jabatan '{pick}'")
         # Tanpa baris ini Plotly menyembunyikan sebagian nama pekerjaan ketika
         # batangnya rapat -- itulah sebab ada batang tanpa label pada tangkapan
         # layar Bu Tri.
@@ -496,11 +496,11 @@ def page_kbji_classification():
     with tab2:
         st.caption("Klasifikasi dengan confidence rendah lebih berisiko salah -- berguna untuk "
                   "spot-check manual atau menambah kata kunci lexicon di notebook.")
-        low = q("""SELECT title AS pekerjaan, kbji_golongan_pokok_nama AS golongan, kbji_confidence AS conf
+        low = q("""SELECT title AS pekerjaan, kbji_golongan_pokok_nama AS jabatan, kbji_confidence AS conf
                   FROM jobs WHERE title != '' GROUP BY title
                   ORDER BY conf ASC LIMIT 100""")
         st.dataframe(
-            low.rename(columns={"pekerjaan": "Pekerjaan", "golongan": "Golongan Pokok", "conf": "Confidence"}),
+            low.rename(columns={"pekerjaan": "Pekerjaan", "jabatan": "Jabatan", "conf": "Confidence"}),
             use_container_width=True, hide_index=True)
 
 
@@ -534,7 +534,7 @@ def page_job_detail():
     n_job = int(titles.loc[titles.title == pick, "n"].iloc[0])
     st.markdown(f"### {pick} · {n_job} lowongan")
 
-    # (v14) Golongan Pokok KBJI 2014 untuk pekerjaan ini
+    # (v14) Jabatan KBJI 2014 untuk pekerjaan ini
     kbji_info = q("""SELECT kbji_golongan_pokok_nama, kbji_confidence FROM jobs
                      WHERE title = ? LIMIT 1""", (pick,))
     if not kbji_info.empty:
@@ -542,7 +542,7 @@ def page_job_detail():
         gconf = kbji_info.kbji_confidence.iloc[0]
         gclr = KBJI_COLORS.get(gnama, "#94A3B8")
         st.markdown(
-            f'🗂️ Golongan Pokok KBJI: <span style="background-color:{gclr}22; '
+            f'🗂️ Jabatan KBJI: <span style="background-color:{gclr}22; '
             f'color:{gclr}; padding:2px 10px; border-radius:12px; font-weight:600;">'
             f'{gnama}</span> &nbsp; <span style="color:#94A3B8;">(confidence {gconf:.2f})</span>',
             unsafe_allow_html=True)
@@ -845,14 +845,14 @@ def page_taxonomy():
                         color_continuous_scale="Blues", labels=dict(color="jumlah skill")),
                         use_container_width=True)
 
-    st.subheader("Peta Kategori Escudero × Golongan Pokok KBJI")
-    st.caption("Kategori skill apa yang paling dibutuhkan di tiap golongan pekerjaan.")
-    hm2 = q(f"""SELECT j.kbji_golongan_pokok_nama AS golongan, s.escudero_broad_category AS kategori, COUNT(*) n
+    st.subheader("Peta Kategori Escudero × Jabatan KBJI")
+    st.caption("Kategori skill apa yang paling dibutuhkan di tiap jabatan.")
+    hm2 = q(f"""SELECT j.kbji_golongan_pokok_nama AS jabatan, s.escudero_broad_category AS kategori, COUNT(*) n
                FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
                WHERE s.escudero_broad_category IN {broad_sql} AND j.kbji_golongan_pokok_nama IS NOT NULL
-               GROUP BY golongan, kategori""")
+               GROUP BY jabatan, kategori""")
     if not hm2.empty:
-        pivot2 = hm2.pivot_table(index="golongan", columns="kategori", values="n", fill_value=0)
+        pivot2 = hm2.pivot_table(index="jabatan", columns="kategori", values="n", fill_value=0)
         pivot2 = pivot2.reindex([g for g in KBJI_ORDER if g in pivot2.index])
         st.plotly_chart(px.imshow(pivot2, text_auto=True, aspect="auto",
                         color_continuous_scale="Purples", labels=dict(color="jumlah skill")),
@@ -1213,7 +1213,7 @@ lebih menonjol pada pekerjaan ini daripada rata-rata pasar.*
 PAGES = {
     "Ringkasan": page_overview,
     "Jumlah Lowongan per Pekerjaan": page_job_title_summary,
-    "Klasifikasi Pekerjaan (KBJI 2014)": page_kbji_classification,
+    "Klasifikasi Jabatan (KBJI 2014)": page_kbji_classification,
     "Skill per Pekerjaan": page_skill_by_job,
     "Detail Kebutuhan per Pekerjaan": page_job_detail,
     "Lokasi & Pekerjaan": page_location_job_title,
