@@ -34,6 +34,68 @@ DB_PATH = "outputs/ner_jobposting.sqlite"     # ubah bila perlu
 SKILL_LABELS = ("SKILL", "SOFT_SKILL", "TOOL", "PROGRAMMING_LANGUAGE")
 
 # ----------------------------------------------------------------------------
+# (v14) Taksonomi Escudero et al. (2025) -- KATEGORISASI UTAMA skill di
+# seluruh dashboard, MENGGANTIKAN SKILL/TOOL/SOFT_SKILL/PROGRAMMING_LANGUAGE
+# sebagai pengelompokan/pewarnaan primer. Label mentah tsb tetap disimpan di
+# DB dan masih ditampilkan sebagai info tambahan (kolom "Jenis Entitas Asli"),
+# tapi bukan lagi sumbu utama analisis.
+# ----------------------------------------------------------------------------
+ESCUDERO_BROAD = ["Cognitive Skills", "Socioemotional Skills", "Manual Skills"]
+
+ESCUDERO_BROAD_COLORS = {
+    "Cognitive Skills":      "#3B82F6",   # biru
+    "Socioemotional Skills": "#F59E0B",   # oranye
+    "Manual Skills":         "#10B981",   # hijau
+}
+
+# 14 subkategori (Tabel 1, Escudero et al. 2025) -- warna tetap per subkategori,
+# dikelompokkan berdekatan (nuansa warna) dengan kategori luas induknya supaya
+# masih terlihat "keluarganya" secara visual.
+ESCUDERO_SUB_COLORS = {
+    # -- Cognitive Skills (nuansa biru-ungu) --
+    "Cognitive skills (narrow sense)":                     "#3B82F6",
+    "Computer (general) skills":                            "#60A5FA",
+    "Software (specific) skills and technical support":     "#2563EB",
+    "Machine Learning and Artificial Intelligence":          "#1D4ED8",
+    "Financial skills":                                      "#6366F1",
+    "Writing skills":                                        "#818CF8",
+    "Project management skills":                             "#4F46E5",
+    # -- Socioemotional Skills (nuansa oranye-kuning) --
+    "Character skills (conscientiousness, emotional stability and openness to experience)": "#F59E0B",
+    "Social skills (including agreeableness and extraversion)": "#FBBF24",
+    "People management skills":                              "#D97706",
+    "Customer service skills":                                "#FCD34D",
+    # -- Manual Skills (nuansa hijau) --
+    "Finger-dexterity skills":                                "#10B981",
+    "Hand-foot-eye coordination skills":                       "#34D399",
+    "Physical skills":                                         "#059669",
+}
+
+# ----------------------------------------------------------------------------
+# (v14) Klasifikasi Jabatan ke Golongan Pokok KBJI 2014 (Bagian 8d notebook).
+# "Tidak Terklasifikasi" = judul pekerjaan yang tidak match referensi manapun
+# dengan confidence memadai -- ditampilkan apa adanya, bukan disembunyikan.
+# ----------------------------------------------------------------------------
+KBJI_ORDER = ["Manajer", "Profesional", "Teknisi dan Asisten Profesional",
+             "Tenaga Tata Usaha", "Tenaga Usaha Jasa dan Tenaga Penjualan",
+             "Pekerja Terampil Pertanian, Kehutanan dan Perikanan",
+             "Pekerja Pengolahan, Kerajinan, dan Ybdi",
+             "Operator dan Perakit Mesin", "Pekerja Kasar", "Tidak Terklasifikasi"]
+
+KBJI_COLORS = {
+    "Manajer":                                              "#6366F1",
+    "Profesional":                                            "#3B82F6",
+    "Teknisi dan Asisten Profesional":                         "#06B6D4",
+    "Tenaga Tata Usaha":                                       "#10B981",
+    "Tenaga Usaha Jasa dan Tenaga Penjualan":                  "#F59E0B",
+    "Pekerja Terampil Pertanian, Kehutanan dan Perikanan":      "#84CC16",
+    "Pekerja Pengolahan, Kerajinan, dan Ybdi":                  "#F97316",
+    "Operator dan Perakit Mesin":                               "#EF4444",
+    "Pekerja Kasar":                                            "#A855F7",
+    "Tidak Terklasifikasi":                                     "#94A3B8",
+}
+
+# ----------------------------------------------------------------------------
 # Nama tampilan untuk label/skill_type -- HANYA untuk ditampilkan, nilai asli
 # di database TIDAK diubah (filter & JOIN lain tetap memakai nilai mentah).
 # "TECHNICAL_SKILL" adalah nilai kolom skill_type, "SKILL" adalah nilai kolom
@@ -51,7 +113,7 @@ DOMAIN_DISPLAY_NAMES = {
 
 # Warna TETAP per jenis skill -- dipakai lewat color_discrete_map= di semua
 # grafik, sehingga "Technical Skill" SELALU biru di halaman mana pun, tidak
-# berganti warna saat memilih jabatan/lokasi yang berbeda.
+# berganti warna saat memilih pekerjaan/lokasi yang berbeda.
 LABEL_COLOR_MAP = {
     "Technical Skill": "#3B82F6",       # biru
     "SOFT_SKILL": "#F59E0B",            # oranye
@@ -193,7 +255,7 @@ def get_qualitative_color_map(values, palette_name="Dark24"):
     """Bangun peta warna TETAP untuk sekumpulan nilai kategori (diurutkan
     alfabetis agar konsisten setiap kali dipanggil, dan dihitung dari SELURUH
     kategori yang mungkin muncul -- bukan dari subset yang sedang tampil --
-    sehingga warnanya tidak berubah saat memilih jabatan/lokasi berbeda)."""
+    sehingga warnanya tidak berubah saat memilih pekerjaan/lokasi berbeda)."""
     palette = getattr(px.colors.qualitative, palette_name)
     values = sorted(set(v for v in values if v is not None))
     return {v: palette[i % len(palette)] for i, v in enumerate(values)}
@@ -203,10 +265,11 @@ def get_qualitative_color_map(values, palette_name="Dark24"):
 st.sidebar.title("🔎 Skill Market")
 page = st.sidebar.radio("Halaman", [
     "Ringkasan",
-    "Jumlah Lowongan per Jabatan",
-    "Skill per Jabatan",
-    "Detail Kebutuhan per Jabatan",
-    "Lokasi & Jabatan",
+    "Jumlah Lowongan per Pekerjaan",
+    "Klasifikasi Jabatan (KBJI 2014)",
+    "Skill per Pekerjaan",
+    "Detail Kebutuhan per Pekerjaan",
+    "Lokasi & Pekerjaan",
     "Skill per Lokasi",
     "Skill Teratas & Berkembang",
     "Taksonomi Keterampilan",
@@ -216,16 +279,20 @@ page = st.sidebar.radio("Halaman", [
     "Analisis Kesenjangan Skill",
 ])
 
-# Filter global (label keterampilan) -- tampilkan nama ramah, tapi tetap
-# memakai nilai label mentah untuk query SQL.
-label_filter = st.sidebar.multiselect(
-    "Filter label keterampilan", list(SKILL_LABELS),
-    default=list(SKILL_LABELS),
-    format_func=lambda x: LABEL_DISPLAY_NAMES.get(x, x))
-label_sql = "(" + ",".join(f"'{l}'" for l in label_filter) + ")" if label_filter \
-            else "('SKILL','SOFT_SKILL','TOOL','PROGRAMMING_LANGUAGE')"
+# (v14) Filter global UTAMA sekarang berdasarkan kategori luas Escudero
+# et al. (2025) -- MENGGANTIKAN filter SKILL/TOOL/SOFT_SKILL/PROGRAMMING_LANGUAGE
+# lama. Semua query "s.label IN {label_sql}" versi lama diganti
+# "s.escudero_broad_category IN {broad_sql}" di seluruh halaman.
+broad_filter = st.sidebar.multiselect(
+    "Filter kategori skill (Escudero et al. 2025)", ESCUDERO_BROAD,
+    default=ESCUDERO_BROAD)
+broad_sql = "(" + ",".join(f"'{b}'" for b in broad_filter) + ")" if broad_filter \
+            else "('" + "','".join(ESCUDERO_BROAD) + "')"
+# alias tetap dipakai di beberapa fungsi cache lama (mis. cooccurrence())
+label_sql = broad_sql
 
-st.sidebar.caption("Sumber: NER IndoBERT + pengayaan atribut Layer 2.")
+st.sidebar.caption("Sumber: NER IndoBERT + pengayaan atribut Layer 2 "
+                   "+ Taksonomi Escudero et al. (2025) + KBJI 2014.")
 
 # Peta warna TETAP untuk domain & jenis skill, dihitung SEKALI dari seluruh
 # data (bukan dari subset yang sedang tampil), agar warnanya konsisten dan
@@ -238,18 +305,24 @@ ENTITY_LABEL_COLOR_MAP = get_qualitative_color_map(_all_entity_labels_display, "
 
 # Legenda warna di sidebar, supaya konsisten warna terlihat jelas dari awal.
 st.sidebar.markdown("---")
-st.sidebar.markdown("**🎨 Legenda Warna Jenis Skill**")
-for lbl, clr in LABEL_COLOR_MAP.items():
+st.sidebar.markdown("**🎨 Legenda Kategori Skill (Escudero)**")
+for lbl, clr in ESCUDERO_BROAD_COLORS.items():
     st.sidebar.markdown(
         f'<span style="color:{clr}; font-size:1.2em;">●</span> {lbl}',
         unsafe_allow_html=True)
+st.sidebar.markdown("**🗂️ Legenda Golongan Pokok KBJI**")
+with st.sidebar.expander("Lihat semua warna golongan"):
+    for lbl, clr in KBJI_COLORS.items():
+        st.markdown(
+            f'<span style="color:{clr}; font-size:1.1em;">●</span> {lbl}',
+            unsafe_allow_html=True)
 
 
 # ================================================================== halaman
 def page_overview():
     st.title("📊 Ringkasan Pasar Kerja")
     jobs = q("SELECT COUNT(*) n FROM jobs").n[0]
-    n_skill = q(f"SELECT COUNT(DISTINCT name) n FROM skills WHERE label IN {label_sql}").n[0]
+    n_skill = q(f"SELECT COUNT(DISTINCT name) n FROM skills WHERE escudero_broad_category IN {broad_sql}").n[0]
     n_ent = q("SELECT COUNT(*) n FROM entities").n[0]
     n_comp = q("SELECT COUNT(*) n FROM companies").n[0]
     c1, c2, c3, c4 = st.columns(4)
@@ -271,6 +344,24 @@ def page_overview():
                     labels={"label": "Label", "n": "Jumlah"}),
                     use_container_width=True)
 
+    # (v14) Kategori skill Escudero et al. (2025) -- kategorisasi UTAMA
+    st.subheader("Kategori Skill (Taksonomi Escudero et al. 2025)")
+    colE1, colE2 = st.columns(2)
+    with colE1:
+        st.markdown("**Kategori Luas**")
+        broad = q("SELECT escudero_broad_category, COUNT(*) n FROM skills GROUP BY 1 ORDER BY 2 DESC")
+        st.plotly_chart(px.pie(broad, names="escudero_broad_category", values="n", hole=.4,
+                        color="escudero_broad_category", color_discrete_map=ESCUDERO_BROAD_COLORS),
+                        use_container_width=True)
+    with colE2:
+        st.markdown("**14 Subkategori**")
+        sub = q("SELECT escudero_subcategory, COUNT(*) n FROM skills GROUP BY 1 ORDER BY 2 DESC")
+        st.plotly_chart(px.bar(sub.iloc[::-1], x="n", y="escudero_subcategory", orientation="h",
+                        color="escudero_subcategory", color_discrete_map=ESCUDERO_SUB_COLORS,
+                        labels={"n": "Jumlah", "escudero_subcategory": "Subkategori"},
+                        height=420),
+                        use_container_width=True)
+
     colA, colB = st.columns(2)
     with colA:
         st.subheader("Domain Skill (Layer 2)")
@@ -291,105 +382,192 @@ def page_overview():
 
 def page_top_skills():
     st.title("🔝 Skill Teratas & Berkembang")
+    st.caption("Dikelompokkan berdasarkan taksonomi Escudero et al. (2025), bukan lagi "
+              "SKILL/TOOL/SOFT_SKILL/PROGRAMMING_LANGUAGE.")
     topn = st.slider("Jumlah skill ditampilkan", 10, 50, 25)
-    df = q(f"""SELECT s.name, s.label, COUNT(*) freq
+    df = q(f"""SELECT s.name, s.label, s.escudero_broad_category, s.escudero_subcategory, COUNT(*) freq
               FROM job_skills js JOIN skills s ON s.id = js.skill_id
-              WHERE s.label IN {label_sql}
+              WHERE s.escudero_broad_category IN {broad_sql}
               GROUP BY s.name, s.label ORDER BY freq DESC LIMIT {topn}""")
-    df = relabel(df)
-    st.plotly_chart(px.bar(df.iloc[::-1], x="freq", y="name", color="label",
+    st.plotly_chart(px.bar(df.iloc[::-1], x="freq", y="name", color="escudero_subcategory",
                     orientation="h", height=25 * topn + 120,
-                    color_discrete_map=LABEL_COLOR_MAP,
-                    labels={"freq": "Jumlah Lowongan", "name": "Skill", "label": "Jenis"}),
+                    color_discrete_map=ESCUDERO_SUB_COLORS,
+                    labels={"freq": "Jumlah Lowongan", "name": "Skill", "escudero_subcategory": "Subkategori"}),
                     use_container_width=True)
     st.dataframe(
-        df.rename(columns={"name": "Skill", "label": "Jenis", "freq": "Jumlah Lowongan"}),
+        df.rename(columns={"name": "Skill", "label": "Jenis Entitas Asli",
+                           "escudero_broad_category": "Kategori Luas",
+                           "escudero_subcategory": "Subkategori", "freq": "Jumlah Lowongan"}),
         use_container_width=True, hide_index=True)
 
 
 def page_job_title_summary():
-    st.title("📋 Jumlah Lowongan per Jabatan")
-    st.caption("Seluruh jabatan yang ada beserta jumlah lowongannya, diurutkan dari yang terbanyak.")
+    st.title("📋 Jumlah Lowongan per Pekerjaan")
+    st.caption("Seluruh pekerjaan yang ada beserta jumlah lowongannya, diurutkan dari yang terbanyak.")
     df = q("""SELECT title, COUNT(*) n FROM jobs
               WHERE title != '' GROUP BY title ORDER BY n DESC""")
-    cari = st.text_input("Cari nama jabatan (opsional)", "")
+    cari = st.text_input("Cari nama pekerjaan (opsional)", "")
     if cari:
         df = df[df.title.str.contains(cari, case=False, na=False)]
     view, info = paginate(df, "jobtitle_summary")
     st.caption(info)
-    view = view.rename(columns={"title": "Jabatan", "n": "Jumlah Lowongan"})
+    view = view.rename(columns={"title": "Pekerjaan", "n": "Jumlah Lowongan"})
     view.index = view.index + 1
     st.dataframe(view, use_container_width=True)
 
 
+def page_kbji_classification():
+    st.title("🗂️ Klasifikasi Jabatan (KBJI 2014)")
+    st.caption("Setiap Pekerjaan diklasifikasikan ke salah satu dari 9 Golongan Pokok "
+              "(Jabatan) KBJI 2014 (kode 1-9; TNI/POLRI dikecualikan). Metode: lexicon → fuzzy → k-NN "
+              "embedding terhadap 2.155 nama jabatan riil dari dokumen KBJI. Lihat Bagian 8d "
+              "pada notebook untuk detail metodologi.")
+
+    dist = q("""SELECT kbji_golongan_pokok_nama AS golongan, COUNT(*) n,
+                       AVG(kbji_confidence) conf_rata
+                FROM jobs GROUP BY golongan ORDER BY n DESC""")
+    dist["golongan"] = pd.Categorical(dist["golongan"],
+                                      categories=[g for g in KBJI_ORDER if g in dist.golongan.values],
+                                      ordered=True)
+    dist = dist.sort_values("golongan")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total lowongan", f"{dist.n.sum():,}")
+    n_unclass = int(dist.loc[dist.golongan == "Tidak Terklasifikasi", "n"].sum()) \
+        if "Tidak Terklasifikasi" in dist.golongan.values else 0
+    c2.metric("Tidak terklasifikasi", f"{n_unclass:,}",
+             f"{n_unclass / dist.n.sum():.1%}" if dist.n.sum() else "0%")
+    c3.metric("Rata-rata confidence", f"{(dist.n * dist.conf_rata).sum() / dist.n.sum():.2f}")
+
+    st.subheader("Distribusi Lowongan per Golongan Pokok")
+    st.plotly_chart(px.bar(dist, x="golongan", y="n", color="golongan",
+                    color_discrete_map=KBJI_COLORS,
+                    labels={"golongan": "Golongan Pokok", "n": "Jumlah Lowongan"}),
+                    use_container_width=True)
+
+    tab1, tab2 = st.tabs(["Jelajah per Golongan", "Kualitas Klasifikasi (QA)"])
+
+    with tab1:
+        pilihan = [g for g in KBJI_ORDER if g in dist.golongan.values]
+        pick = st.selectbox("Pilih golongan pokok", pilihan)
+        df = q("""SELECT title AS pekerjaan, COUNT(*) n, AVG(kbji_confidence) conf
+                 FROM jobs WHERE kbji_golongan_pokok_nama = ?
+                 GROUP BY title ORDER BY n DESC""", (pick,))
+        view, info = paginate(df, "kbji_jelajah")
+        st.caption(info)
+        st.plotly_chart(px.bar(view.head(20).iloc[::-1], x="n", y="pekerjaan", orientation="h",
+                        color_discrete_sequence=[KBJI_COLORS.get(pick, "#6366F1")],
+                        labels={"n": "Jumlah Lowongan", "pekerjaan": "Pekerjaan"},
+                        title=f"Pekerjaan teratas dalam golongan '{pick}'"),
+                        use_container_width=True)
+        st.dataframe(
+            view.rename(columns={"pekerjaan": "Pekerjaan", "n": "Jumlah Lowongan", "conf": "Confidence Rata-rata"}),
+            use_container_width=True, hide_index=True)
+
+    with tab2:
+        st.caption("Klasifikasi dengan confidence rendah lebih berisiko salah -- berguna untuk "
+                  "spot-check manual atau menambah kata kunci lexicon di notebook.")
+        low = q("""SELECT title AS pekerjaan, kbji_golongan_pokok_nama AS golongan, kbji_confidence AS conf
+                  FROM jobs WHERE title != '' GROUP BY title
+                  ORDER BY conf ASC LIMIT 100""")
+        st.dataframe(
+            low.rename(columns={"pekerjaan": "Pekerjaan", "golongan": "Golongan Pokok (Jabatan)", "conf": "Confidence"}),
+            use_container_width=True, hide_index=True)
+
+
 def page_skill_by_job():
-    st.title("💼 Skill per Jabatan")
+    st.title("💼 Skill per Pekerjaan")
     titles = q("""SELECT title, COUNT(*) n FROM jobs
                   WHERE title != '' GROUP BY title ORDER BY n DESC LIMIT 300""")
-    pick = st.selectbox("Pilih jabatan", titles.title.tolist())
-    df = q(f"""SELECT s.name, s.label, COUNT(*) freq
+    pick = st.selectbox("Pilih pekerjaan", titles.title.tolist())
+    df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(*) freq
               FROM jobs j JOIN job_skills js ON js.job_id = j.id
               JOIN skills s ON s.id = js.skill_id
-              WHERE j.title = ? AND s.label IN {label_sql}
+              WHERE j.title = ? AND s.escudero_broad_category IN {broad_sql}
               GROUP BY s.name, s.label ORDER BY freq DESC LIMIT 25""", (pick,))
     if df.empty:
-        st.info("Belum ada skill tercatat untuk jabatan ini.")
+        st.info("Belum ada skill tercatat untuk pekerjaan ini.")
     else:
-        df = relabel(df)
-        st.plotly_chart(px.bar(df.iloc[::-1], x="freq", y="name", color="label",
-                        orientation="h", color_discrete_map=LABEL_COLOR_MAP,
-                        labels={"freq": "Jumlah Lowongan", "name": "Skill", "label": "Jenis"}),
+        st.plotly_chart(px.bar(df.iloc[::-1], x="freq", y="name", color="escudero_subcategory",
+                        orientation="h", color_discrete_map=ESCUDERO_SUB_COLORS,
+                        labels={"freq": "Jumlah Lowongan", "name": "Skill", "escudero_subcategory": "Subkategori"}),
                         use_container_width=True)
 
 
 def page_job_detail():
-    st.title("🧭 Detail Kebutuhan per Jabatan")
-    st.caption("Untuk jabatan terpilih: skill lengkap dengan taksonomi Layer 2 "
+    st.title("🧭 Detail Kebutuhan per Pekerjaan")
+    st.caption("Untuk pekerjaan terpilih: skill lengkap dengan taksonomi Layer 2 "
               "(domain, transferability, importance, proficiency), tools, jenjang pendidikan, "
               "dan bidang studi yang diminta.")
     titles = q("""SELECT title, COUNT(*) n FROM jobs WHERE title != ''
                   GROUP BY title ORDER BY n DESC LIMIT 300""")
-    pick = st.selectbox("Pilih jabatan", titles.title.tolist())
+    pick = st.selectbox("Pilih pekerjaan", titles.title.tolist())
     n_job = int(titles.loc[titles.title == pick, "n"].iloc[0])
     st.markdown(f"### {pick} · {n_job} lowongan")
+
+    # (v14) Golongan Pokok KBJI 2014 untuk pekerjaan ini
+    kbji_info = q("""SELECT kbji_golongan_pokok_nama, kbji_confidence FROM jobs
+                     WHERE title = ? LIMIT 1""", (pick,))
+    if not kbji_info.empty:
+        gnama = kbji_info.kbji_golongan_pokok_nama.iloc[0]
+        gconf = kbji_info.kbji_confidence.iloc[0]
+        gclr = KBJI_COLORS.get(gnama, "#94A3B8")
+        st.markdown(
+            f'🗂️ Golongan Pokok KBJI: <span style="background-color:{gclr}22; '
+            f'color:{gclr}; padding:2px 10px; border-radius:12px; font-weight:600;">'
+            f'{gnama}</span> &nbsp; <span style="color:#94A3B8;">(confidence {gconf:.2f})</span>',
+            unsafe_allow_html=True)
 
     # ---- Tabel skill + taksonomi + importance/proficiency (agregat) ----
     st.subheader("🛠️ Skill yang Dibutuhkan + Taksonomi")
     skill_tax = q(f"""
         SELECT s.name AS skill, s.label, s.skill_domain AS domain,
                s.skill_function AS fungsi, s.transferability AS transfer,
+               s.escudero_broad_category AS kategori_luas, s.escudero_subcategory AS subkategori,
                COUNT(*) AS frekuensi,
                SUM(CASE WHEN js.importance='REQUIRED'  THEN 1 ELSE 0 END) AS wajib,
                SUM(CASE WHEN js.importance='PREFERRED' THEN 1 ELSE 0 END) AS diutamakan,
                SUM(CASE WHEN js.proficiency='ADVANCED' THEN 1 ELSE 0 END) AS mahir
         FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-        WHERE j.title = ? AND s.label IN {label_sql}
+        WHERE j.title = ? AND s.escudero_broad_category IN {broad_sql}
         GROUP BY s.name, s.label ORDER BY frekuensi DESC LIMIT 40""", (pick,))
     if skill_tax.empty:
-        st.info("Belum ada skill tercatat untuk jabatan ini.")
+        st.info("Belum ada skill tercatat untuk pekerjaan ini.")
     else:
-        skill_tax = relabel_domain(skill_tax, "domain")
         st.plotly_chart(px.bar(skill_tax.head(20).iloc[::-1], x="frekuensi", y="skill",
-                        color="domain", orientation="h", height=520,
-                        hover_data=["label", "fungsi", "transfer", "wajib", "diutamakan"],
-                        color_discrete_map=DOMAIN_COLOR_MAP,
-                        labels={"frekuensi": "Jumlah Lowongan", "skill": "Skill", "domain": "Domain"}),
+                        color="subkategori", orientation="h", height=520,
+                        hover_data=["label", "domain", "fungsi", "transfer", "wajib", "diutamakan"],
+                        color_discrete_map=ESCUDERO_SUB_COLORS,
+                        labels={"frekuensi": "Jumlah Lowongan", "skill": "Skill", "subkategori": "Subkategori Escudero"}),
                         use_container_width=True)
         st.markdown("**Tabel lengkap (taksonomi + importance/proficiency)**")
         st.dataframe(
             skill_tax.rename(columns={
-                "skill": "Skill", "label": "Label", "domain": "Domain", "fungsi": "Fungsi",
-                "transfer": "Transferability", "frekuensi": "Frekuensi",
+                "skill": "Skill", "label": "Jenis Entitas Asli", "domain": "Domain (Layer 2)", "fungsi": "Fungsi",
+                "transfer": "Transferability", "kategori_luas": "Kategori Luas (Escudero)",
+                "subkategori": "Subkategori (Escudero)", "frekuensi": "Frekuensi",
                 "wajib": "Wajib", "diutamakan": "Diutamakan", "mahir": "Mahir"}),
             use_container_width=True, hide_index=True)
 
-    # ---- Ringkasan taksonomi jabatan ini ----
-    st.subheader("🧬 Profil Taksonomi Jabatan Ini")
-    c1, c2, c3 = st.columns(3)
+    # ---- Ringkasan taksonomi pekerjaan ini ----
+    st.subheader("🧬 Profil Taksonomi Pekerjaan Ini")
+    c0, c1, c2, c3 = st.columns(4)
+    with c0:
+        esc = q(f"""SELECT s.escudero_broad_category AS kat, COUNT(*) n
+                    FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
+                    WHERE j.title=? AND s.escudero_broad_category IN {broad_sql}
+                    GROUP BY kat ORDER BY n DESC""", (pick,))
+        st.markdown("**Kategori Escudero**")
+        if not esc.empty:
+            st.plotly_chart(px.pie(esc, names="kat", values="n", hole=.4,
+                            color="kat", color_discrete_map=ESCUDERO_BROAD_COLORS),
+                            use_container_width=True)
+        else:
+            st.info("Tidak ada data.")
     with c1:
         dom = q(f"""SELECT s.skill_domain AS domain, COUNT(*) n
                     FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-                    WHERE j.title=? AND s.label IN {label_sql}
+                    WHERE j.title=? AND s.escudero_broad_category IN {broad_sql}
                     GROUP BY s.skill_domain ORDER BY n DESC""", (pick,))
         st.markdown("**Domain**")
         if not dom.empty:
@@ -402,7 +580,7 @@ def page_job_detail():
     with c2:
         tr = q(f"""SELECT s.transferability AS t, COUNT(*) n
                    FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-                   WHERE j.title=? AND s.label IN {label_sql}
+                   WHERE j.title=? AND s.escudero_broad_category IN {broad_sql}
                    GROUP BY s.transferability ORDER BY n DESC""", (pick,))
         st.markdown("**Transferability**")
         if not tr.empty:
@@ -414,7 +592,7 @@ def page_job_detail():
     with c3:
         imp = q(f"""SELECT COALESCE(NULLIF(js.importance,''),'UNKNOWN') AS imp, COUNT(*) n
                     FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-                    WHERE j.title=? AND s.label IN {label_sql}
+                    WHERE j.title=? AND s.escudero_broad_category IN {broad_sql}
                     GROUP BY imp ORDER BY n DESC""", (pick,))
         st.markdown("**Importance**")
         if not imp.empty:
@@ -473,11 +651,11 @@ def page_job_detail():
 
 
 def page_location_job_title():
-    st.title("📍🗂️ Lokasi & Jabatan")
+    st.title("📍🗂️ Lokasi & Pekerjaan")
     tab1, tab2 = st.tabs(["Pilih Lokasi", "Ringkasan Semua Lokasi"])
 
     with tab1:
-        st.caption("Pilih satu lokasi untuk melihat semua jabatan yang ada di sana, "
+        st.caption("Pilih satu lokasi untuk melihat semua pekerjaan yang ada di sana, "
                   "diurutkan dari jumlah lowongan terbanyak.")
         locs = q("""SELECT l.name, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
                     WHERE l.name != '' GROUP BY l.name ORDER BY n DESC LIMIT 300""")
@@ -485,7 +663,7 @@ def page_location_job_title():
         df = q("""SELECT j.title, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
                   WHERE l.name=? AND j.title!='' GROUP BY j.title ORDER BY n DESC""", (pick,))
         if df.empty:
-            st.info("Belum ada data jabatan untuk lokasi ini.")
+            st.info("Belum ada data pekerjaan untuk lokasi ini.")
         else:
             st.metric(f"Total lowongan di '{pick}'", f"{df.n.sum():,}")
             view, info = paginate(df, "locjob_detail", default_per_page=25)
@@ -493,30 +671,30 @@ def page_location_job_title():
             st.plotly_chart(
                 px.bar(view.iloc[::-1], x="n", y="title", orientation="h",
                       height=25 * len(view) + 140,
-                      labels={"n": "Jumlah Lowongan", "title": "Jabatan"},
-                      title=f"Jabatan di '{pick}'"),
+                      labels={"n": "Jumlah Lowongan", "title": "Pekerjaan"},
+                      title=f"Pekerjaan di '{pick}'"),
                 use_container_width=True)
             st.dataframe(
-                view.rename(columns={"title": "Jabatan", "n": "Jumlah Lowongan"}),
+                view.rename(columns={"title": "Pekerjaan", "n": "Jumlah Lowongan"}),
                 use_container_width=True, hide_index=True)
 
     with tab2:
-        st.caption("Satu baris per lokasi: total lowongan dan jumlah jabatan unik di sana. "
-                  "Bisa diurutkan dari lowongan terbanyak ATAU variasi jabatan terbanyak.")
+        st.caption("Satu baris per lokasi: total lowongan dan jumlah pekerjaan unik di sana. "
+                  "Bisa diurutkan dari lowongan terbanyak ATAU variasi pekerjaan terbanyak.")
         ring = q("""SELECT l.name AS lokasi, COUNT(*) AS total_lowongan,
-                          COUNT(DISTINCT j.title) AS jumlah_jabatan_unik
+                          COUNT(DISTINCT j.title) AS jumlah_pekerjaan_unik
                    FROM jobs j JOIN locations l ON l.id = j.location_id
                    WHERE l.name != '' GROUP BY l.name""")
         urut = st.radio("Urutkan berdasarkan",
-                        ["Total Lowongan Terbanyak", "Variasi Jabatan Terbanyak"],
+                        ["Total Lowongan Terbanyak", "Variasi Pekerjaan Terbanyak"],
                         horizontal=True, key="locjob_ringkasan_urut")
-        kolom = "total_lowongan" if urut == "Total Lowongan Terbanyak" else "jumlah_jabatan_unik"
+        kolom = "total_lowongan" if urut == "Total Lowongan Terbanyak" else "jumlah_pekerjaan_unik"
         ring = ring.sort_values(kolom, ascending=False)
         view, info = paginate(ring, "locjob_ringkasan")
         st.caption(info)
         st.dataframe(
             view.rename(columns={"lokasi": "Lokasi", "total_lowongan": "Total Lowongan",
-                                 "jumlah_jabatan_unik": "Jabatan Unik"}),
+                                 "jumlah_pekerjaan_unik": "Pekerjaan Unik"}),
             use_container_width=True, hide_index=True)
 
 
@@ -525,33 +703,51 @@ def page_skill_by_location():
     locs = q("""SELECT l.name, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
                 GROUP BY l.name ORDER BY n DESC LIMIT 100""")
     pick = st.selectbox("Pilih lokasi", locs.name.tolist())
-    df = q(f"""SELECT s.name, s.label, COUNT(*) freq
+    df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(*) freq
               FROM jobs j JOIN locations l ON l.id=j.location_id
               JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-              WHERE l.name = ? AND s.label IN {label_sql}
+              WHERE l.name = ? AND s.escudero_broad_category IN {broad_sql}
               GROUP BY s.name, s.label ORDER BY freq DESC LIMIT 25""", (pick,))
     if df.empty:
         st.info("Belum ada data untuk lokasi ini.")
     else:
-        df = relabel(df)
-        st.plotly_chart(px.bar(df.iloc[::-1], x="freq", y="name", color="label",
-                        orientation="h", color_discrete_map=LABEL_COLOR_MAP,
-                        labels={"freq": "Jumlah Lowongan", "name": "Skill", "label": "Jenis"}),
+        st.plotly_chart(px.bar(df.iloc[::-1], x="freq", y="name", color="escudero_subcategory",
+                        orientation="h", color_discrete_map=ESCUDERO_SUB_COLORS,
+                        labels={"freq": "Jumlah Lowongan", "name": "Skill", "escudero_subcategory": "Subkategori"}),
                         use_container_width=True)
 
 
 def page_taxonomy():
-    st.title("🧬 Taksonomi Keterampilan (Layer 2)")
-    st.caption("Atribut hasil pengayaan otomatis: skill_type, domain, function, transferability, "
-              "importance, dan proficiency. Dihitung dari kemunculan skill di lowongan.")
+    st.title("🧬 Taksonomi Keterampilan (Escudero 2025 + Layer 2)")
+    st.caption("Atribut hasil pengayaan otomatis: kategori Escudero (broad+sub), skill_type, domain, "
+              "function, transferability, importance, dan proficiency. Dihitung dari kemunculan skill di lowongan.")
 
-    st.subheader("Distribusi Atribut (tingkat skill unik)")
+    # (v14) Distribusi taksonomi Escudero -- ditaruh paling atas karena ini
+    # kategorisasi UTAMA sekarang.
+    st.subheader("Taksonomi Escudero et al. (2025)")
+    colX, colY = st.columns(2)
+    with colX:
+        st.markdown("**Kategori Luas**")
+        b = q(f"""SELECT escudero_broad_category AS kategori, COUNT(*) n FROM skills
+                 WHERE escudero_broad_category IN {broad_sql} GROUP BY kategori ORDER BY n DESC""")
+        st.plotly_chart(px.pie(b, names="kategori", values="n", hole=.4,
+                        color="kategori", color_discrete_map=ESCUDERO_BROAD_COLORS),
+                        use_container_width=True)
+    with colY:
+        st.markdown("**14 Subkategori**")
+        s_ = q(f"""SELECT escudero_subcategory AS kategori, COUNT(*) n FROM skills
+                  WHERE escudero_broad_category IN {broad_sql} GROUP BY kategori ORDER BY n DESC""")
+        st.plotly_chart(px.pie(s_, names="kategori", values="n", hole=.4,
+                        color="kategori", color_discrete_map=ESCUDERO_SUB_COLORS),
+                        use_container_width=True)
+
+    st.subheader("Distribusi Atribut Layer 2 (tingkat skill unik)")
     cols = st.columns(2)
     facets_skill = [("skill_type", "Jenis Skill"), ("skill_domain", "Domain Skill"),
                     ("skill_function", "Fungsi Skill"), ("transferability", "Transferability")]
     for i, (col, judul) in enumerate(facets_skill):
         df = q(f"""SELECT COALESCE(NULLIF({col},''),'(kosong)') AS kategori, COUNT(*) n
-                   FROM skills WHERE label IN {label_sql}
+                   FROM skills WHERE escudero_broad_category IN {broad_sql}
                    GROUP BY kategori ORDER BY n DESC""")
         with cols[i % 2]:
             st.markdown(f"**{judul}**")
@@ -585,7 +781,7 @@ def page_taxonomy():
                                             ("proficiency", "Proficiency", PROFICIENCY_COLORS)]):
         df = q(f"""SELECT COALESCE(NULLIF(js.{col},''),'UNKNOWN') AS kategori, COUNT(*) n
                    FROM job_skills js JOIN skills s ON s.id = js.skill_id
-                   WHERE s.label IN {label_sql} GROUP BY kategori ORDER BY n DESC""")
+                   WHERE s.escudero_broad_category IN {broad_sql} GROUP BY kategori ORDER BY n DESC""")
         with cols2[i]:
             st.markdown(f"**{judul}**")
             if df.empty:
@@ -596,29 +792,41 @@ def page_taxonomy():
                                 labels={"kategori": judul, "n": "Jumlah"}),
                                 use_container_width=True)
 
-    st.subheader("Jelajah Skill per Domain")
-    doms = q("SELECT DISTINCT skill_domain FROM skills WHERE skill_domain IS NOT NULL ORDER BY 1")
-    if not doms.empty:
-        pick = st.selectbox("Pilih domain", doms.skill_domain.tolist(),
-                            format_func=lambda x: DOMAIN_DISPLAY_NAMES.get(x, x))
-        df = q(f"""SELECT s.name, s.label, s.skill_function, s.transferability, COUNT(*) freq
-                   FROM job_skills js JOIN skills s ON s.id = js.skill_id
-                   WHERE s.skill_domain = ? AND s.label IN {label_sql}
-                   GROUP BY s.name ORDER BY freq DESC LIMIT 30""", (pick,))
+    st.subheader("Jelajah Skill per Subkategori Escudero")
+    subs = q("SELECT DISTINCT escudero_subcategory FROM skills WHERE escudero_subcategory IS NOT NULL ORDER BY 1")
+    if not subs.empty:
+        pick = st.selectbox("Pilih subkategori", subs.escudero_subcategory.tolist())
+        df = q("""SELECT s.name, s.label, s.skill_domain, s.transferability, COUNT(*) freq
+                 FROM job_skills js JOIN skills s ON s.id = js.skill_id
+                 WHERE s.escudero_subcategory = ?
+                 GROUP BY s.name ORDER BY freq DESC LIMIT 30""", (pick,))
         st.dataframe(
-            df.rename(columns={"name": "Skill", "label": "Label", "skill_function": "Fungsi",
+            df.rename(columns={"name": "Skill", "label": "Jenis Entitas Asli", "skill_domain": "Domain",
                                "transferability": "Transferability", "freq": "Frekuensi"}),
             use_container_width=True, hide_index=True)
 
     st.subheader("Peta Domain × Fungsi")
     hm = q(f"""SELECT skill_domain, skill_function, COUNT(*) n FROM skills
-              WHERE label IN {label_sql} AND skill_domain IS NOT NULL AND skill_function IS NOT NULL
+              WHERE escudero_broad_category IN {broad_sql} AND skill_domain IS NOT NULL AND skill_function IS NOT NULL
               GROUP BY skill_domain, skill_function""")
     if not hm.empty:
         hm = relabel_domain(hm, "skill_domain")
         pivot = hm.pivot_table(index="skill_domain", columns="skill_function", values="n", fill_value=0)
         st.plotly_chart(px.imshow(pivot, text_auto=True, aspect="auto",
                         color_continuous_scale="Blues", labels=dict(color="jumlah skill")),
+                        use_container_width=True)
+
+    st.subheader("Peta Kategori Escudero × Golongan Pokok KBJI")
+    st.caption("Kategori skill apa yang paling dibutuhkan di tiap golongan pekerjaan.")
+    hm2 = q(f"""SELECT j.kbji_golongan_pokok_nama AS golongan, s.escudero_broad_category AS kategori, COUNT(*) n
+               FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
+               WHERE s.escudero_broad_category IN {broad_sql} AND j.kbji_golongan_pokok_nama IS NOT NULL
+               GROUP BY golongan, kategori""")
+    if not hm2.empty:
+        pivot2 = hm2.pivot_table(index="golongan", columns="kategori", values="n", fill_value=0)
+        pivot2 = pivot2.reindex([g for g in KBJI_ORDER if g in pivot2.index])
+        st.plotly_chart(px.imshow(pivot2, text_auto=True, aspect="auto",
+                        color_continuous_scale="Purples", labels=dict(color="jumlah skill")),
                         use_container_width=True)
 
 
@@ -684,9 +892,9 @@ def page_education():
 
 
 @st.cache_data
-def cooccurrence(label_sql, min_count):
+def cooccurrence(broad_sql, min_count):
     rows = q(f"""SELECT js.job_id, s.name FROM job_skills js
-                 JOIN skills s ON s.id=js.skill_id WHERE s.label IN {label_sql}""")
+                 JOIN skills s ON s.id=js.skill_id WHERE s.escudero_broad_category IN {broad_sql}""")
     pair = Counter()
     for _, grp in rows.groupby("job_id"):
         for a, b in combinations(sorted(set(grp["name"])), 2):
@@ -743,18 +951,18 @@ def page_trends():
 
 def page_skill_gap():
     st.title("🎯 Analisis Kesenjangan Skill")
-    st.caption("Perbandingan pangsa skill pada suatu jabatan terhadap baseline seluruh data.")
+    st.caption("Perbandingan pangsa skill pada suatu pekerjaan terhadap baseline seluruh data.")
     base = q(f"""SELECT s.name, COUNT(*) f FROM job_skills js JOIN skills s ON s.id=js.skill_id
-                 WHERE s.label IN {label_sql} GROUP BY s.name""")
+                 WHERE s.escudero_broad_category IN {broad_sql} GROUP BY s.name""")
     total_base = base.f.sum()
     base = base.set_index("name")
     titles = q("SELECT title, COUNT(*) n FROM jobs WHERE title!='' GROUP BY title ORDER BY n DESC LIMIT 200")
-    pick = st.selectbox("Bandingkan jabatan", titles.title.tolist())
+    pick = st.selectbox("Bandingkan pekerjaan", titles.title.tolist())
     sub = q(f"""SELECT s.name, COUNT(*) f FROM jobs j JOIN job_skills js ON js.job_id=j.id
                 JOIN skills s ON s.id=js.skill_id
-                WHERE j.title=? AND s.label IN {label_sql} GROUP BY s.name""", (pick,))
+                WHERE j.title=? AND s.escudero_broad_category IN {broad_sql} GROUP BY s.name""", (pick,))
     if sub.empty:
-        st.info("Belum ada data untuk jabatan ini.")
+        st.info("Belum ada data untuk pekerjaan ini.")
         return
     total_sub = sub.f.sum()
     sub = sub.set_index("name")
@@ -763,7 +971,7 @@ def page_skill_gap():
         share_sub = sub.loc[name, "f"] / total_sub
         share_base = base.loc[name, "f"] / total_base if name in base.index else 0
         rows.append((name, share_sub, share_base, share_sub - share_base))
-    gap = pd.DataFrame(rows, columns=["skill", "share_jabatan", "share_baseline", "gap"])
+    gap = pd.DataFrame(rows, columns=["skill", "share_pekerjaan", "share_baseline", "gap"])
     gap = gap.sort_values("gap", ascending=False).head(20)
     st.plotly_chart(px.bar(gap.iloc[::-1], x="gap", y="skill", orientation="h",
                     color="gap", color_continuous_scale="RdBu",
@@ -771,17 +979,18 @@ def page_skill_gap():
                     title=f"Skill paling khas untuk '{pick}' vs pasar keseluruhan"),
                     use_container_width=True)
     st.dataframe(
-        gap.rename(columns={"skill": "Skill", "share_jabatan": "Pangsa di Jabatan",
+        gap.rename(columns={"skill": "Skill", "share_pekerjaan": "Pangsa di Pekerjaan",
                             "share_baseline": "Pangsa di Pasar", "gap": "Selisih"}),
         use_container_width=True, hide_index=True)
 
 
 PAGES = {
     "Ringkasan": page_overview,
-    "Jumlah Lowongan per Jabatan": page_job_title_summary,
-    "Skill per Jabatan": page_skill_by_job,
-    "Detail Kebutuhan per Jabatan": page_job_detail,
-    "Lokasi & Jabatan": page_location_job_title,
+    "Jumlah Lowongan per Pekerjaan": page_job_title_summary,
+    "Klasifikasi Jabatan (KBJI 2014)": page_kbji_classification,
+    "Skill per Pekerjaan": page_skill_by_job,
+    "Detail Kebutuhan per Pekerjaan": page_job_detail,
+    "Lokasi & Pekerjaan": page_location_job_title,
     "Skill per Lokasi": page_skill_by_location,
     "Skill Teratas & Berkembang": page_top_skills,
     "Taksonomi Keterampilan": page_taxonomy,
