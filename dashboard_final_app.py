@@ -30,7 +30,21 @@ import plotly.express as px
 # ============================================================================
 # KONFIGURASI
 # ============================================================================
-DB_PATH = "outputs/ner_jobposting.sqlite"     # ubah bila perlu
+import os as _os
+from glob import glob as _glob
+
+def _cari_db():
+    """Cari file DB di lokasi-lokasi yang wajar, supaya dashboard tidak langsung
+    error saat dijalankan orang lain di komputer berbeda."""
+    kandidat = ["outputs/ner_jobposting.sqlite", "ner_jobposting.sqlite",
+                "../outputs/ner_jobposting.sqlite", "/content/outputs/ner_jobposting.sqlite"]
+    for k in kandidat:
+        if _os.path.exists(k):
+            return k
+    lain = sorted(_glob("**/*ner_jobposting*.sqlite", recursive=True))
+    return lain[0] if lain else kandidat[0]
+
+DB_PATH = _cari_db()
 SKILL_LABELS = ("SKILL", "SOFT_SKILL", "TOOL", "PROGRAMMING_LANGUAGE")
 
 # ----------------------------------------------------------------------------
@@ -113,7 +127,7 @@ DOMAIN_DISPLAY_NAMES = {
 
 # Warna TETAP per jenis skill -- dipakai lewat color_discrete_map= di semua
 # grafik, sehingga "Technical Skill" SELALU biru di halaman mana pun, tidak
-# berganti warna saat memilih pekerjaan/lokasi yang berbeda.
+# berganti warna saat memilih jabatan/lokasi yang berbeda.
 LABEL_COLOR_MAP = {
     "Technical Skill": "#3B82F6",       # biru
     "SOFT_SKILL": "#F59E0B",            # oranye
@@ -255,7 +269,7 @@ def get_qualitative_color_map(values, palette_name="Dark24"):
     """Bangun peta warna TETAP untuk sekumpulan nilai kategori (diurutkan
     alfabetis agar konsisten setiap kali dipanggil, dan dihitung dari SELURUH
     kategori yang mungkin muncul -- bukan dari subset yang sedang tampil --
-    sehingga warnanya tidak berubah saat memilih pekerjaan/lokasi berbeda)."""
+    sehingga warnanya tidak berubah saat memilih jabatan/lokasi berbeda)."""
     palette = getattr(px.colors.qualitative, palette_name)
     values = sorted(set(v for v in values if v is not None))
     return {v: palette[i % len(palette)] for i, v in enumerate(values)}
@@ -265,11 +279,11 @@ def get_qualitative_color_map(values, palette_name="Dark24"):
 st.sidebar.title("🔎 Skill Market")
 page = st.sidebar.radio("Halaman", [
     "Ringkasan",
-    "Jumlah Lowongan per Pekerjaan",
+    "Jumlah Lowongan per Jabatan",
     "Klasifikasi Jabatan (KBJI 2014)",
-    "Skill per Pekerjaan",
-    "Detail Kebutuhan per Pekerjaan",
-    "Lokasi & Pekerjaan",
+    "Skill per Jabatan",
+    "Detail Kebutuhan per Jabatan",
+    "Lokasi & Jabatan",
     "Skill per Lokasi",
     "Skill Teratas & Berkembang",
     "Taksonomi Keterampilan",
@@ -402,24 +416,24 @@ def page_top_skills():
 
 
 def page_job_title_summary():
-    st.title("📋 Jumlah Lowongan per Pekerjaan")
-    st.caption("Seluruh pekerjaan yang ada beserta jumlah lowongannya, diurutkan dari yang terbanyak.")
+    st.title("📋 Jumlah Lowongan per Jabatan")
+    st.caption("Seluruh jabatan yang ada beserta jumlah lowongannya, diurutkan dari yang terbanyak.")
     df = q("""SELECT title, COUNT(*) n FROM jobs
               WHERE title != '' GROUP BY title ORDER BY n DESC""")
-    cari = st.text_input("Cari nama pekerjaan (opsional)", "")
+    cari = st.text_input("Cari nama jabatan (opsional)", "")
     if cari:
         df = df[df.title.str.contains(cari, case=False, na=False)]
     view, info = paginate(df, "jobtitle_summary")
     st.caption(info)
-    view = view.rename(columns={"title": "Pekerjaan", "n": "Jumlah Lowongan"})
+    view = view.rename(columns={"title": "Jabatan", "n": "Jumlah Lowongan"})
     view.index = view.index + 1
     st.dataframe(view, use_container_width=True)
 
 
 def page_kbji_classification():
     st.title("🗂️ Klasifikasi Jabatan (KBJI 2014)")
-    st.caption("Setiap Pekerjaan diklasifikasikan ke salah satu dari 9 Golongan Pokok "
-              "(Jabatan) KBJI 2014 (kode 1-9; TNI/POLRI dikecualikan). Metode: lexicon → fuzzy → k-NN "
+    st.caption("Setiap judul Pekerjaan diklasifikasikan ke salah satu dari 9 Golongan Pokok "
+              "KBJI 2014 (kode 1-9; TNI/POLRI dikecualikan). Metode: lexicon → fuzzy → k-NN "
               "embedding terhadap 2.155 nama jabatan riil dari dokumen KBJI. Lihat Bagian 8d "
               "pada notebook untuk detail metodologi.")
 
@@ -439,6 +453,14 @@ def page_kbji_classification():
              f"{n_unclass / dist.n.sum():.1%}" if dist.n.sum() else "0%")
     c3.metric("Rata-rata confidence", f"{(dist.n * dist.conf_rata).sum() / dist.n.sum():.2f}")
 
+    _kolom_jobs = q("SELECT * FROM jobs LIMIT 1").columns.tolist()
+    if "kbji_source" in _kolom_jobs:
+        _man = q("SELECT COUNT(*) n FROM jobs WHERE kbji_source='manual_review'").n[0]
+        if _man:
+            st.info(f"{_man} lowongan telah dikoreksi manual berdasarkan telaah pembimbing "
+                   "(lihat `kbji_override.py` untuk daftar koreksi beserta alasannya). "
+                   "Sisanya hasil klasifikasi otomatis.")
+
     st.subheader("Distribusi Lowongan per Golongan Pokok")
     st.plotly_chart(px.bar(dist, x="golongan", y="n", color="golongan",
                     color_discrete_map=KBJI_COLORS,
@@ -450,43 +472,50 @@ def page_kbji_classification():
     with tab1:
         pilihan = [g for g in KBJI_ORDER if g in dist.golongan.values]
         pick = st.selectbox("Pilih golongan pokok", pilihan)
-        df = q("""SELECT title AS pekerjaan, COUNT(*) n, AVG(kbji_confidence) conf
+        df = q("""SELECT title AS jabatan, COUNT(*) n, AVG(kbji_confidence) conf
                  FROM jobs WHERE kbji_golongan_pokok_nama = ?
                  GROUP BY title ORDER BY n DESC""", (pick,))
         view, info = paginate(df, "kbji_jelajah")
         st.caption(info)
-        st.plotly_chart(px.bar(view.head(20).iloc[::-1], x="n", y="pekerjaan", orientation="h",
-                        color_discrete_sequence=[KBJI_COLORS.get(pick, "#6366F1")],
-                        labels={"n": "Jumlah Lowongan", "pekerjaan": "Pekerjaan"},
-                        title=f"Pekerjaan teratas dalam golongan '{pick}'"),
-                        use_container_width=True)
+        _top = view.head(20)
+        _fig = px.bar(_top.iloc[::-1], x="n", y="jabatan", orientation="h",
+                      height=30 * len(_top) + 150,
+                      color_discrete_sequence=[KBJI_COLORS.get(pick, "#6366F1")],
+                      labels={"n": "Jumlah Lowongan", "jabatan": "Jabatan"},
+                      title=f"Jabatan teratas dalam golongan '{pick}'")
+        # Tanpa baris ini Plotly menyembunyikan sebagian nama jabatan ketika
+        # batangnya rapat -- itulah sebab ada batang tanpa label pada tangkapan
+        # layar Bu Tri.
+        _fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+        _fig.update_xaxes(dtick=1)
+        st.plotly_chart(_fig, use_container_width=True)
         st.dataframe(
-            view.rename(columns={"pekerjaan": "Pekerjaan", "n": "Jumlah Lowongan", "conf": "Confidence Rata-rata"}),
+            view.rename(columns={"jabatan": "Jabatan", "n": "Jumlah Lowongan", "conf": "Confidence Rata-rata"}),
             use_container_width=True, hide_index=True)
 
     with tab2:
         st.caption("Klasifikasi dengan confidence rendah lebih berisiko salah -- berguna untuk "
                   "spot-check manual atau menambah kata kunci lexicon di notebook.")
-        low = q("""SELECT title AS pekerjaan, kbji_golongan_pokok_nama AS golongan, kbji_confidence AS conf
+        low = q("""SELECT title AS jabatan, kbji_golongan_pokok_nama AS golongan, kbji_confidence AS conf
                   FROM jobs WHERE title != '' GROUP BY title
                   ORDER BY conf ASC LIMIT 100""")
         st.dataframe(
-            low.rename(columns={"pekerjaan": "Pekerjaan", "golongan": "Golongan Pokok (Jabatan)", "conf": "Confidence"}),
+            low.rename(columns={"jabatan": "Jabatan", "golongan": "Golongan Pokok", "conf": "Confidence"}),
             use_container_width=True, hide_index=True)
 
 
 def page_skill_by_job():
-    st.title("💼 Skill per Pekerjaan")
+    st.title("💼 Skill per Jabatan")
     titles = q("""SELECT title, COUNT(*) n FROM jobs
                   WHERE title != '' GROUP BY title ORDER BY n DESC LIMIT 300""")
-    pick = st.selectbox("Pilih pekerjaan", titles.title.tolist())
+    pick = st.selectbox("Pilih jabatan", titles.title.tolist())
     df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(*) freq
               FROM jobs j JOIN job_skills js ON js.job_id = j.id
               JOIN skills s ON s.id = js.skill_id
               WHERE j.title = ? AND s.escudero_broad_category IN {broad_sql}
               GROUP BY s.name, s.label ORDER BY freq DESC LIMIT 25""", (pick,))
     if df.empty:
-        st.info("Belum ada skill tercatat untuk pekerjaan ini.")
+        st.info("Belum ada skill tercatat untuk jabatan ini.")
     else:
         st.plotly_chart(px.bar(df.iloc[::-1], x="freq", y="name", color="escudero_subcategory",
                         orientation="h", color_discrete_map=ESCUDERO_SUB_COLORS,
@@ -495,17 +524,17 @@ def page_skill_by_job():
 
 
 def page_job_detail():
-    st.title("🧭 Detail Kebutuhan per Pekerjaan")
-    st.caption("Untuk pekerjaan terpilih: skill lengkap dengan taksonomi Layer 2 "
+    st.title("🧭 Detail Kebutuhan per Jabatan")
+    st.caption("Untuk jabatan terpilih: skill lengkap dengan taksonomi Layer 2 "
               "(domain, transferability, importance, proficiency), tools, jenjang pendidikan, "
               "dan bidang studi yang diminta.")
     titles = q("""SELECT title, COUNT(*) n FROM jobs WHERE title != ''
                   GROUP BY title ORDER BY n DESC LIMIT 300""")
-    pick = st.selectbox("Pilih pekerjaan", titles.title.tolist())
+    pick = st.selectbox("Pilih jabatan", titles.title.tolist())
     n_job = int(titles.loc[titles.title == pick, "n"].iloc[0])
     st.markdown(f"### {pick} · {n_job} lowongan")
 
-    # (v14) Golongan Pokok KBJI 2014 untuk pekerjaan ini
+    # (v14) Golongan Pokok KBJI 2014 untuk jabatan ini
     kbji_info = q("""SELECT kbji_golongan_pokok_nama, kbji_confidence FROM jobs
                      WHERE title = ? LIMIT 1""", (pick,))
     if not kbji_info.empty:
@@ -532,7 +561,7 @@ def page_job_detail():
         WHERE j.title = ? AND s.escudero_broad_category IN {broad_sql}
         GROUP BY s.name, s.label ORDER BY frekuensi DESC LIMIT 40""", (pick,))
     if skill_tax.empty:
-        st.info("Belum ada skill tercatat untuk pekerjaan ini.")
+        st.info("Belum ada skill tercatat untuk jabatan ini.")
     else:
         st.plotly_chart(px.bar(skill_tax.head(20).iloc[::-1], x="frekuensi", y="skill",
                         color="subkategori", orientation="h", height=520,
@@ -549,8 +578,8 @@ def page_job_detail():
                 "wajib": "Wajib", "diutamakan": "Diutamakan", "mahir": "Mahir"}),
             use_container_width=True, hide_index=True)
 
-    # ---- Ringkasan taksonomi pekerjaan ini ----
-    st.subheader("🧬 Profil Taksonomi Pekerjaan Ini")
+    # ---- Ringkasan taksonomi jabatan ini ----
+    st.subheader("🧬 Profil Taksonomi Jabatan Ini")
     c0, c1, c2, c3 = st.columns(4)
     with c0:
         esc = q(f"""SELECT s.escudero_broad_category AS kat, COUNT(*) n
@@ -651,11 +680,11 @@ def page_job_detail():
 
 
 def page_location_job_title():
-    st.title("📍🗂️ Lokasi & Pekerjaan")
+    st.title("📍🗂️ Lokasi & Jabatan")
     tab1, tab2 = st.tabs(["Pilih Lokasi", "Ringkasan Semua Lokasi"])
 
     with tab1:
-        st.caption("Pilih satu lokasi untuk melihat semua pekerjaan yang ada di sana, "
+        st.caption("Pilih satu lokasi untuk melihat semua jabatan yang ada di sana, "
                   "diurutkan dari jumlah lowongan terbanyak.")
         locs = q("""SELECT l.name, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
                     WHERE l.name != '' GROUP BY l.name ORDER BY n DESC LIMIT 300""")
@@ -663,7 +692,7 @@ def page_location_job_title():
         df = q("""SELECT j.title, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
                   WHERE l.name=? AND j.title!='' GROUP BY j.title ORDER BY n DESC""", (pick,))
         if df.empty:
-            st.info("Belum ada data pekerjaan untuk lokasi ini.")
+            st.info("Belum ada data jabatan untuk lokasi ini.")
         else:
             st.metric(f"Total lowongan di '{pick}'", f"{df.n.sum():,}")
             view, info = paginate(df, "locjob_detail", default_per_page=25)
@@ -671,30 +700,30 @@ def page_location_job_title():
             st.plotly_chart(
                 px.bar(view.iloc[::-1], x="n", y="title", orientation="h",
                       height=25 * len(view) + 140,
-                      labels={"n": "Jumlah Lowongan", "title": "Pekerjaan"},
-                      title=f"Pekerjaan di '{pick}'"),
+                      labels={"n": "Jumlah Lowongan", "title": "Jabatan"},
+                      title=f"Jabatan di '{pick}'"),
                 use_container_width=True)
             st.dataframe(
-                view.rename(columns={"title": "Pekerjaan", "n": "Jumlah Lowongan"}),
+                view.rename(columns={"title": "Jabatan", "n": "Jumlah Lowongan"}),
                 use_container_width=True, hide_index=True)
 
     with tab2:
-        st.caption("Satu baris per lokasi: total lowongan dan jumlah pekerjaan unik di sana. "
-                  "Bisa diurutkan dari lowongan terbanyak ATAU variasi pekerjaan terbanyak.")
+        st.caption("Satu baris per lokasi: total lowongan dan jumlah jabatan unik di sana. "
+                  "Bisa diurutkan dari lowongan terbanyak ATAU variasi jabatan terbanyak.")
         ring = q("""SELECT l.name AS lokasi, COUNT(*) AS total_lowongan,
-                          COUNT(DISTINCT j.title) AS jumlah_pekerjaan_unik
+                          COUNT(DISTINCT j.title) AS jumlah_jabatan_unik
                    FROM jobs j JOIN locations l ON l.id = j.location_id
                    WHERE l.name != '' GROUP BY l.name""")
         urut = st.radio("Urutkan berdasarkan",
-                        ["Total Lowongan Terbanyak", "Variasi Pekerjaan Terbanyak"],
+                        ["Total Lowongan Terbanyak", "Variasi Jabatan Terbanyak"],
                         horizontal=True, key="locjob_ringkasan_urut")
-        kolom = "total_lowongan" if urut == "Total Lowongan Terbanyak" else "jumlah_pekerjaan_unik"
+        kolom = "total_lowongan" if urut == "Total Lowongan Terbanyak" else "jumlah_jabatan_unik"
         ring = ring.sort_values(kolom, ascending=False)
         view, info = paginate(ring, "locjob_ringkasan")
         st.caption(info)
         st.dataframe(
             view.rename(columns={"lokasi": "Lokasi", "total_lowongan": "Total Lowongan",
-                                 "jumlah_pekerjaan_unik": "Pekerjaan Unik"}),
+                                 "jumlah_jabatan_unik": "Jabatan Unik"}),
             use_container_width=True, hide_index=True)
 
 
@@ -924,45 +953,231 @@ def page_cooccurrence():
             use_container_width=True, hide_index=True)
 
 
+# ----------------------------------------------------------------------------
+# (v15) Periode analisis tren.
+# Sebaran tanggal posting sangat timpang: bulan-bulan sebelum 2025-05 hanya
+# berisi < 20 lowongan (sisa scraping), dan bulan terakhir (2026-05) terpotong
+# karena pengambilan data berhenti di tengah bulan. Kalau semuanya diplot,
+# grafik garis akan menggambarkan pola PENGAMBILAN DATA, bukan pola permintaan
+# pasar. Karena itu tren dibatasi ke periode dengan cakupan memadai.
+# ----------------------------------------------------------------------------
+TREN_BULAN_MIN = "2025-05"
+TREN_BULAN_MAX = "2026-04"
+TREN_MIN_LOWONGAN_PER_BULAN = 50
+
+
+@st.cache_data
+def bulan_valid():
+    """Bulan yang punya cukup lowongan untuk dianalisis trennya."""
+    d = q("""SELECT substr(posted_date,1,7) bulan, COUNT(*) n FROM jobs
+             WHERE posted_date NOT IN ('','None') GROUP BY bulan ORDER BY bulan""")
+    d = d[(d.bulan >= TREN_BULAN_MIN) & (d.bulan <= TREN_BULAN_MAX)
+          & (d.n >= TREN_MIN_LOWONGAN_PER_BULAN)]
+    return d
+
+
 def page_trends():
     st.title("📈 Tren Permintaan Skill")
-    st.caption("Tren jumlah lowongan yang menyebut skill dari waktu ke waktu.")
-    freq = q("""SELECT s.name, COUNT(*) f FROM job_skills js JOIN skills s ON s.id=js.skill_id
-                GROUP BY s.name ORDER BY f DESC LIMIT 30""")
-    picks = st.multiselect("Pilih skill", freq.name.tolist(), default=freq.name.tolist()[:5])
-    if not picks:
-        st.info("Pilih minimal satu skill.")
+
+    bv = bulan_valid()
+    if bv.empty:
+        st.warning("Tidak ada bulan dengan cakupan data memadai.")
         return
-    ph = ",".join("?" * len(picks))
-    df = q(f"""SELECT substr(j.posted_date,1,7) AS bulan, s.name, COUNT(*) n
-               FROM jobs j JOIN job_skills js ON js.job_id=j.id
-               JOIN skills s ON s.id=js.skill_id
-               WHERE s.name IN ({ph}) AND j.posted_date NOT IN ('','None')
-               GROUP BY bulan, s.name ORDER BY bulan""", tuple(picks))
-    if df.empty:
-        st.info("Data tanggal belum tersedia.")
-    else:
-        skill_color_map = get_qualitative_color_map(picks, "Dark24")
-        st.plotly_chart(px.line(df, x="bulan", y="n", color="name", markers=True,
-                        color_discrete_map=skill_color_map,
-                        labels={"bulan": "Bulan", "n": "Jumlah Lowongan", "name": "Skill"}),
-                        use_container_width=True)
+    total_bulanan = dict(zip(bv.bulan, bv.n))
+    bulan_list = bv.bulan.tolist()
+
+    st.caption(
+        f"Periode analisis: **{bulan_list[0]} s.d. {bulan_list[-1]}** "
+        f"({len(bulan_list)} bulan, {bv.n.sum():,} lowongan). Bulan di luar rentang ini "
+        f"dikeluarkan karena berisi kurang dari {TREN_MIN_LOWONGAN_PER_BULAN} lowongan, "
+        "sehingga fluktuasinya mencerminkan pola pengambilan data, bukan permintaan pasar.")
+
+    satuan = st.radio(
+        "Satuan sumbu Y",
+        ["Persentase lowongan bulan itu (disarankan)", "Jumlah lowongan (absolut)"],
+        horizontal=True, key="tren_satuan")
+    pakai_persen = satuan.startswith("Persentase")
+    if pakai_persen:
+        st.caption("Persentase = jumlah lowongan yang menyebut skill ÷ total lowongan pada "
+                  "bulan yang sama. Ini menghilangkan efek jumlah lowongan yang berbeda "
+                  "antar bulan, sehingga naik-turunnya benar-benar berarti perubahan "
+                  "permintaan relatif.")
+
+    ph_bulan = ",".join("?" * len(bulan_list))
+
+    def siapkan(df, kolom_seri):
+        """Tambahkan kolom nilai (absolut/persen) dan lengkapi bulan yang kosong dengan 0."""
+        idx = pd.MultiIndex.from_product(
+            [sorted(df[kolom_seri].unique()), bulan_list], names=[kolom_seri, "bulan"])
+        df = (df.set_index([kolom_seri, "bulan"])["n"]
+                .reindex(idx, fill_value=0).reset_index())
+        df["total_bulan"] = df["bulan"].map(total_bulanan)
+        df["nilai"] = df["n"] / df["total_bulan"] * 100 if pakai_persen else df["n"]
+        return df
+
+    y_label = "% Lowongan Bulan Itu" if pakai_persen else "Jumlah Lowongan"
+
+    tab_agg, tab_skill = st.tabs([
+        "Tren per Kategori Escudero (gabungan)", "Tren per Skill Individual"])
+
+    # ---------------------------------------------------------------- (poin 4)
+    with tab_agg:
+        st.subheader("Gabungan Cognitive / Socioemotional / Manual Skills")
+        st.caption("Setiap garis = TOTAL seluruh skill dalam kategori luas tersebut. "
+                  "Satu lowongan dihitung sekali per kategori, sehingga garisnya bisa "
+                  "dibaca sebagai 'berapa persen lowongan yang meminta minimal satu "
+                  "skill dari kategori ini'.")
+
+        level = st.radio("Tingkat agregasi",
+                         ["3 Kategori Luas", "14 Subkategori"],
+                         horizontal=True, key="tren_level")
+        kolom = ("escudero_broad_category" if level.startswith("3")
+                 else "escudero_subcategory")
+
+        agg = q(f"""SELECT substr(j.posted_date,1,7) AS bulan,
+                          s.{kolom} AS kategori,
+                          COUNT(DISTINCT j.id) n
+                   FROM jobs j JOIN job_skills js ON js.job_id=j.id
+                   JOIN skills s ON s.id=js.skill_id
+                   WHERE substr(j.posted_date,1,7) IN ({ph_bulan})
+                     AND s.escudero_broad_category IN {broad_sql}
+                   GROUP BY bulan, kategori""", tuple(bulan_list))
+
+        if agg.empty:
+            st.info("Tidak ada data pada periode ini.")
+        else:
+            agg = siapkan(agg, "kategori")
+            cmap = (ESCUDERO_BROAD_COLORS if level.startswith("3")
+                    else ESCUDERO_SUB_COLORS)
+            fig = px.line(agg, x="bulan", y="nilai", color="kategori", markers=True,
+                          color_discrete_map=cmap,
+                          labels={"bulan": "Bulan", "nilai": y_label, "kategori": "Kategori"})
+            fig.update_xaxes(tickmode="array", tickvals=bulan_list)
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown("**Ringkasan perubahan (awal vs akhir periode)**")
+            awal, akhir = bulan_list[0], bulan_list[-1]
+            piv = agg.pivot_table(index="kategori", columns="bulan", values="nilai")
+            ring = pd.DataFrame({
+                "Kategori": piv.index,
+                f"{awal}": piv[awal].values,
+                f"{akhir}": piv[akhir].values,
+                "Perubahan": piv[akhir].values - piv[awal].values,
+                "Rata-rata": piv[bulan_list].mean(axis=1).values,
+            }).sort_values("Rata-rata", ascending=False)
+            fmt = "{:.1f}%" if pakai_persen else "{:.0f}"
+            st.dataframe(ring.style.format({c: fmt for c in ring.columns[1:]}),
+                         use_container_width=True, hide_index=True)
+
+    # ---------------------------------------------------------------- (poin 3)
+    with tab_skill:
+        st.subheader("Tren skill tertentu")
+        st.caption("Sebelumnya hanya 30 skill teratas yang bisa dipilih. Sekarang SELURUH "
+                  "skill tersedia — gunakan kotak pencarian untuk menemukannya.")
+
+        min_f = st.slider(
+            "Tampilkan skill dengan minimal ... kemunculan", 1, 200, 20,
+            help="Skill yang hanya muncul beberapa kali menghasilkan garis tren yang "
+                 "tidak stabil. Turunkan ke 1 bila ingin melihat semuanya.")
+
+        freq = q(f"""SELECT s.name, COUNT(*) f FROM job_skills js
+                     JOIN skills s ON s.id=js.skill_id
+                     WHERE s.escudero_broad_category IN {broad_sql}
+                     GROUP BY s.name HAVING f >= {min_f} ORDER BY f DESC""")
+        if freq.empty:
+            st.info("Tidak ada skill yang memenuhi ambang. Turunkan nilainya.")
+            return
+
+        st.caption(f"{len(freq):,} skill tersedia untuk dipilih "
+                  f"(dari total {q('SELECT COUNT(DISTINCT name) n FROM skills').n[0]:,} skill unik).")
+
+        opsi = [f"{n} ({f}×)" for n, f in zip(freq.name, freq.f)]
+        peta = dict(zip(opsi, freq.name))
+        pilih = st.multiselect("Cari & pilih skill", opsi, default=opsi[:5],
+                               key="tren_skill_pick")
+        picks = [peta[o] for o in pilih]
+        if not picks:
+            st.info("Pilih minimal satu skill.")
+            return
+
+        ph = ",".join("?" * len(picks))
+        df = q(f"""SELECT substr(j.posted_date,1,7) AS bulan, s.name, COUNT(DISTINCT j.id) n
+                   FROM jobs j JOIN job_skills js ON js.job_id=j.id
+                   JOIN skills s ON s.id=js.skill_id
+                   WHERE s.name IN ({ph}) AND substr(j.posted_date,1,7) IN ({ph_bulan})
+                   GROUP BY bulan, s.name""", tuple(picks) + tuple(bulan_list))
+        if df.empty:
+            st.info("Skill terpilih tidak muncul pada periode analisis.")
+            return
+
+        df = siapkan(df, "name")
+        fig = px.line(df, x="bulan", y="nilai", color="name", markers=True,
+                      color_discrete_map=get_qualitative_color_map(picks, "Dark24"),
+                      labels={"bulan": "Bulan", "nilai": y_label, "name": "Skill"})
+        fig.update_xaxes(tickmode="array", tickvals=bulan_list)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def page_skill_gap():
     st.title("🎯 Analisis Kesenjangan Skill")
-    st.caption("Perbandingan pangsa skill pada suatu pekerjaan terhadap baseline seluruh data.")
+    st.caption("Membandingkan seberapa besar porsi suatu skill di SATU jabatan "
+              "dibandingkan porsinya di SELURUH pasar kerja.")
+
+    with st.expander("📖 Cara membaca halaman ini (klik untuk membuka)", expanded=True):
+        st.markdown("""
+**Apa yang dihitung.** Untuk setiap skill dilakukan perbandingan dua proporsi:
+
+| Kolom | Rumus | Artinya |
+|---|---|---|
+| **Pangsa di Jabatan** | jumlah penyebutan skill di jabatan ini ÷ total penyebutan semua skill di jabatan ini | Dari 100 skill yang diminta lowongan jabatan ini, berapa yang berupa skill tersebut |
+| **Pangsa di Pasar** | jumlah penyebutan skill di seluruh lowongan ÷ total penyebutan semua skill di seluruh lowongan | Angka pembanding (*baseline*): seberapa umum skill itu di pasar kerja secara keseluruhan |
+| **Selisih** | Pangsa di Jabatan − Pangsa di Pasar | Seberapa **khas** skill itu bagi jabatan tersebut |
+
+**Contoh angka.** Misalkan untuk jabatan *Data Analyst*: `microsoft excel` punya
+Pangsa di Jabatan 0,082 (8,2%), Pangsa di Pasar 0,017 (1,7%), Selisih +0,065.
+Dibacanya: *Excel menyusun 8,2% dari seluruh permintaan skill pada lowongan Data
+Analyst, sementara di pasar kerja secara umum hanya 1,7%. Jadi Excel 4,8 kali
+lebih menonjol pada jabatan ini daripada rata-rata pasar.*
+
+**Cara membaca tandanya.**
+- **Selisih positif besar** → skill pembeda (*distinctive*). Inilah yang membuat
+  jabatan tersebut berbeda dari jabatan lain, dan yang paling relevan untuk
+  rekomendasi kurikulum atau pelatihan yang spesifik.
+- **Selisih mendekati nol** → skill generik. Diminta jabatan ini, tapi sama
+  seringnya diminta jabatan lain (mis. *komunikasi*, *teliti*, *jujur*). Penting
+  untuk dikuasai, tapi bukan penciri jabatan.
+- **Selisih negatif** → skill yang justru **lebih jarang** diminta pada jabatan ini
+  dibanding pasar umum.
+
+**Peringatan penting saat menafsirkan.**
+1. Ini mengukur **kekhasan**, bukan **kekurangan tenaga kerja**. "Kesenjangan"
+   di sini adalah selisih antara jabatan dan pasar pada sisi *permintaan* saja.
+   Untuk menyimpulkan adanya kesenjangan keterampilan yang sesungguhnya,
+   diperlukan data sisi *penawaran* (mis. profil lulusan), yang tidak tersedia
+   dalam data lowongan ini.
+2. Angkanya adalah **pangsa relatif**, bukan persentase lowongan. Bila satu
+   lowongan menyebut 10 skill, tiap skill menyumbang 1/10 pada penyebutnya.
+3. Jabatan dengan jumlah lowongan sedikit menghasilkan pangsa yang tidak stabil —
+   perhatikan jumlah lowongan yang tertera di bawah sebelum menarik kesimpulan.
+        """)
     base = q(f"""SELECT s.name, COUNT(*) f FROM job_skills js JOIN skills s ON s.id=js.skill_id
                  WHERE s.escudero_broad_category IN {broad_sql} GROUP BY s.name""")
     total_base = base.f.sum()
     base = base.set_index("name")
     titles = q("SELECT title, COUNT(*) n FROM jobs WHERE title!='' GROUP BY title ORDER BY n DESC LIMIT 200")
-    pick = st.selectbox("Bandingkan pekerjaan", titles.title.tolist())
+    pick = st.selectbox("Bandingkan jabatan", titles.title.tolist())
+    n_lowongan = int(titles.loc[titles.title == pick, "n"].iloc[0])
+    if n_lowongan < 10:
+        st.warning(f"Jabatan '{pick}' hanya punya {n_lowongan} lowongan. "
+                  "Pangsa yang dihitung dari sampel sekecil ini tidak stabil — "
+                  "tafsirkan dengan hati-hati.")
+    else:
+        st.caption(f"Dihitung dari {n_lowongan} lowongan berjudul '{pick}'.")
     sub = q(f"""SELECT s.name, COUNT(*) f FROM jobs j JOIN job_skills js ON js.job_id=j.id
                 JOIN skills s ON s.id=js.skill_id
                 WHERE j.title=? AND s.escudero_broad_category IN {broad_sql} GROUP BY s.name""", (pick,))
     if sub.empty:
-        st.info("Belum ada data untuk pekerjaan ini.")
+        st.info("Belum ada data untuk jabatan ini.")
         return
     total_sub = sub.f.sum()
     sub = sub.set_index("name")
@@ -971,26 +1186,42 @@ def page_skill_gap():
         share_sub = sub.loc[name, "f"] / total_sub
         share_base = base.loc[name, "f"] / total_base if name in base.index else 0
         rows.append((name, share_sub, share_base, share_sub - share_base))
-    gap = pd.DataFrame(rows, columns=["skill", "share_pekerjaan", "share_baseline", "gap"])
+    gap = pd.DataFrame(rows, columns=["skill", "share_jabatan", "share_baseline", "gap"])
     gap = gap.sort_values("gap", ascending=False).head(20)
-    st.plotly_chart(px.bar(gap.iloc[::-1], x="gap", y="skill", orientation="h",
-                    color="gap", color_continuous_scale="RdBu",
-                    labels={"gap": "Selisih Pangsa", "skill": "Skill"},
-                    title=f"Skill paling khas untuk '{pick}' vs pasar keseluruhan"),
-                    use_container_width=True)
+    fig = px.bar(gap.iloc[::-1], x="gap", y="skill", orientation="h",
+                 color="gap", color_continuous_scale="RdBu",
+                 height=28 * len(gap) + 140,
+                 labels={"gap": "Selisih Pangsa (Jabatan − Pasar)", "skill": "Skill"},
+                 title=f"Skill paling khas untuk '{pick}' dibanding pasar keseluruhan")
+    # tampilkan SEMUA label sumbu-Y; tanpa ini Plotly melewati sebagian nama skill
+    fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+    st.plotly_chart(fig, use_container_width=True)
+
+    tabel = gap.copy()
+    tabel["rasio"] = tabel.apply(
+        lambda r: (r.share_jabatan / r.share_baseline) if r.share_baseline > 0 else float("inf"),
+        axis=1)
+    tabel["share_jabatan"] = (tabel.share_jabatan * 100).round(2).astype(str) + "%"
+    tabel["share_baseline"] = (tabel.share_baseline * 100).round(2).astype(str) + "%"
+    tabel["gap"] = (tabel.gap * 100).round(2).astype(str) + " poin"
+    tabel["rasio"] = tabel.rasio.map(lambda x: "baru di jabatan ini" if x == float("inf")
+                                     else f"{x:.1f}×")
     st.dataframe(
-        gap.rename(columns={"skill": "Skill", "share_pekerjaan": "Pangsa di Pekerjaan",
-                            "share_baseline": "Pangsa di Pasar", "gap": "Selisih"}),
+        tabel.rename(columns={"skill": "Skill", "share_jabatan": "Pangsa di Jabatan",
+                              "share_baseline": "Pangsa di Pasar", "gap": "Selisih",
+                              "rasio": "Berapa Kali Lebih Menonjol"}),
         use_container_width=True, hide_index=True)
+    st.caption("Kolom terakhir = Pangsa di Jabatan ÷ Pangsa di Pasar. Nilai 3,0× berarti "
+              "skill tersebut tiga kali lebih menonjol pada jabatan ini dibanding rata-rata pasar.")
 
 
 PAGES = {
     "Ringkasan": page_overview,
-    "Jumlah Lowongan per Pekerjaan": page_job_title_summary,
+    "Jumlah Lowongan per Jabatan": page_job_title_summary,
     "Klasifikasi Jabatan (KBJI 2014)": page_kbji_classification,
-    "Skill per Pekerjaan": page_skill_by_job,
-    "Detail Kebutuhan per Pekerjaan": page_job_detail,
-    "Lokasi & Pekerjaan": page_location_job_title,
+    "Skill per Jabatan": page_skill_by_job,
+    "Detail Kebutuhan per Jabatan": page_job_detail,
+    "Lokasi & Jabatan": page_location_job_title,
     "Skill per Lokasi": page_skill_by_location,
     "Skill Teratas & Berkembang": page_top_skills,
     "Taksonomi Keterampilan": page_taxonomy,
