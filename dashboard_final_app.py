@@ -1229,6 +1229,33 @@ def page_salary():
     def rp(x):
         return f"Rp{x:,.0f}".replace(",", ".")
 
+    def label_singkat(v):
+        """Rp4.500.000 -> '4,5jt'; Rp500.000 -> '500rb'.
+
+        Plotly secara bawaan menulis 4.5M (million, gaya Inggris). Dalam bahasa
+        Indonesia satuannya 'jt' untuk juta dan 'rb' untuk ribu, dengan koma
+        sebagai pemisah desimal.
+        """
+        if v >= 1_000_000:
+            teks = f"{v/1_000_000:.1f}".rstrip("0").rstrip(".")
+            return teks.replace(".", ",") + "jt"
+        if v >= 1_000:
+            return f"{v/1_000:.0f}rb"
+        return f"{v:.0f}"
+
+    def sumbu_rupiah(fig, sumbu="x", vmaks=None):
+        """Ganti penanda sumbu gaji menjadi format Indonesia."""
+        import math
+        vmaks = vmaks or 1
+        langkah = 500_000 if vmaks <= 6_000_000 else (
+            1_000_000 if vmaks <= 15_000_000 else 5_000_000)
+        atas = math.ceil(vmaks / langkah) * langkah + langkah
+        nilai = list(range(0, int(atas), langkah))
+        opsi = dict(tickmode="array", tickvals=nilai,
+                    ticktext=[label_singkat(v) for v in nilai])
+        (fig.update_xaxes if sumbu == "x" else fig.update_yaxes)(**opsi)
+        return fig
+
     tab1, tab2, tab3 = st.tabs(
         ["Sebaran Keseluruhan", "Gaji per Jabatan KBJI", "Gaji per Pekerjaan"])
 
@@ -1251,6 +1278,7 @@ def page_salary():
                            title="Sebaran gaji yang ditawarkan")
         fig.add_vline(x=s.median(), line_dash="dash", line_color="#DC2626",
                       annotation_text=f"Median {rp(s.median())}")
+        sumbu_rupiah(fig, "x", s.max())
         st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Menurut jenjang pendidikan yang diminta")
@@ -1268,6 +1296,7 @@ def page_salary():
                              labels={"median": "Median Gaji (Rp)", "jenjang": "Jenjang"},
                              hover_data={"count": True})
                 fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+                sumbu_rupiah(fig, "x", g["median"].max())
                 st.plotly_chart(fig, use_container_width=True)
                 st.caption("Hanya jenjang dengan minimal 30 lowongan yang ditampilkan. "
                           "Teks jenjang diambil apa adanya dari entitas EDUCATION_LEVEL "
@@ -1291,6 +1320,7 @@ def page_salary():
                          title="Median gaji menurut jabatan KBJI")
             fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
             fig.update_layout(showlegend=False)
+            sumbu_rupiah(fig, "x", g["median"].max())
             st.plotly_chart(fig, use_container_width=True)
 
             box = d[d.jabatan.isin(g.jabatan)]
@@ -1300,6 +1330,7 @@ def page_salary():
                           title="Sebaran gaji dalam tiap jabatan")
             fig2.update_yaxes(tickmode="linear", dtick=1, automargin=True)
             fig2.update_layout(showlegend=False)
+            sumbu_rupiah(fig2, "x", box.gaji.max())
             st.plotly_chart(fig2, use_container_width=True)
             st.caption("Diagram kotak memperlihatkan bahwa rentang gaji DI DALAM satu "
                       "jabatan sering lebih lebar daripada selisih ANTAR jabatan.")
@@ -1343,6 +1374,7 @@ def page_salary():
                                  "pekerjaan": "Pekerjaan", "count": "Jumlah lowongan"},
                          title=judul)
             fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+            sumbu_rupiah(fig, "x", sub["median"].max())
             st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Bandingkan sebaran gaji antar pekerjaan")
@@ -1358,6 +1390,7 @@ def page_salary():
                          labels={"gaji": "Gaji (Rp per bulan)", "pekerjaan": "Pekerjaan"})
             fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
             fig.update_layout(showlegend=False)
+            sumbu_rupiah(fig, "x", box.gaji.max())
             st.plotly_chart(fig, use_container_width=True)
             st.caption("Diagram kotak memperlihatkan rentang gaji di dalam satu "
                       "pekerjaan, bukan hanya nilai tengahnya. Kotak yang lebar berarti "
