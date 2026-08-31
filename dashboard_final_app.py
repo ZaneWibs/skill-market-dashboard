@@ -230,6 +230,21 @@ def get_conn(path, sidik=None):
     return sqlite3.connect(path, check_same_thread=False)
 
 
+def filter_tangguh(alias="j"):
+    """Potongan SQL untuk menyembunyikan lowongan yang ditangguhkan.
+
+    Dipakai di SEMUA halaman yang menampilkan jabatan KBJI. Tanpa ini, satu
+    lowongan yang tautannya sudah mati tetap muncul sebagai baris
+    'Tidak Terklasifikasi' pada peta dan grafik, padahal di halaman
+    Klasifikasi Jabatan sudah disembunyikan.
+    """
+    kolom = q("SELECT * FROM jobs LIMIT 1").columns.tolist()
+    if "kbji_ditangguhkan" not in kolom:
+        return ""
+    awalan = f"{alias}." if alias else ""
+    return f" AND COALESCE({awalan}kbji_ditangguhkan,0)=0"
+
+
 def _sidik_db():
     """Sidik jari berkas database: (ukuran, waktu ubah).
 
@@ -930,7 +945,10 @@ def page_taxonomy():
     st.caption("Kategori skill apa yang paling dibutuhkan di tiap jabatan.")
     hm2 = q(f"""SELECT j.kbji_golongan_pokok_nama AS jabatan, s.escudero_broad_category AS kategori, COUNT(*) n
                FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-               WHERE s.escudero_broad_category IN {broad_sql} AND j.kbji_golongan_pokok_nama IS NOT NULL
+               WHERE s.escudero_broad_category IN {broad_sql}
+                 AND j.kbji_golongan_pokok_nama IS NOT NULL
+                 AND j.kbji_golongan_pokok_nama != 'Tidak Terklasifikasi'
+                 {filter_tangguh("j")}
                GROUP BY jabatan, kategori""")
     if not hm2.empty:
         pivot2 = hm2.pivot_table(index="jabatan", columns="kategori", values="n", fill_value=0)
@@ -1322,7 +1340,9 @@ def page_salary():
     # ------------------------------------------------------------------ tab 2
     with tab2:
         d = q(f"""SELECT kbji_golongan_pokok_nama AS jabatan, {kolom_gaji} AS gaji
-                  FROM jobs {FILTER} AND COALESCE(kbji_ditangguhkan,0)=0""")
+                  FROM jobs {FILTER}
+                    AND kbji_golongan_pokok_nama != 'Tidak Terklasifikasi'
+                    {filter_tangguh("")}""")
         g = (d.groupby("jabatan")["gaji"].agg(["median", "mean", "count"])
              .reset_index().query("count >= 10").sort_values("median", ascending=False))
         if g.empty:
