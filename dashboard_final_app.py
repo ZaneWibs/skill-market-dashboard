@@ -1793,12 +1793,14 @@ lebih menonjol pada pekerjaan ini daripada rata-rata pasar.*
                  color="kategori", color_discrete_map=warna,
                  height=30 * len(gap) + 190,
                  labels={"gap": "Selisih Pangsa (Pekerjaan − Pasar)",
-                         "skill": "Skill", "kategori": "Kategori Escudero"},
-                 title=f"Skill paling khas untuk '{pick}' dibanding pasar keseluruhan")
+                         "skill": "Skill", "kategori": "Kategori Escudero"})
+    # Judul ditulis di luar grafik: bila diletakkan di dalam, judul bertumpuk
+    # dengan legenda horizontal di atas plot.
+    st.markdown(f"**Skill paling khas untuk '{pick}' dibanding pasar keseluruhan**")
     # tampilkan SEMUA label sumbu-Y; tanpa ini Plotly melewati sebagian nama skill
     fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
     fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                                  xanchor="left", x=0), margin=dict(t=90))
+                                  xanchor="left", x=0), margin=dict(t=50))
     st.plotly_chart(fig, use_container_width=True)
     st.caption("Warna batang mengikuti kategori Escudero, sama dengan halaman "
               "Taksonomi Keterampilan dan legenda di sidebar. Jadi terlihat langsung "
