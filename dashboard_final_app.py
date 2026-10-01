@@ -145,6 +145,32 @@ PROFICIENCY_COLORS = {"ADVANCED": "#EF4444", "INTERMEDIATE": "#F59E0B",
 # draft sebelumnya -- sudah dicek langsung terhadap basis data).
 TRANSFER_COLORS = {"HIGH": "#10B981", "MEDIUM": "#F59E0B", "LOW": "#6366F1", "UNKNOWN": "#94A3B8"}
 
+# ----------------------------------------------------------------------------
+# (v17) Rumpun ilmu (Permendikbud 154/2014 Pasal 2) dan jenjang baku. Urutan
+# warna tetap -- lolos validasi CVD (palet kategorikal rujukan). Karena tiga
+# warna di bawah kontras 3:1 terhadap latar, setiap batang diberi label angka
+# dan tabel selalu disediakan.
+# ----------------------------------------------------------------------------
+RUMPUN_ORDER = ["Ilmu Terapan", "Ilmu Formal", "Ilmu Sosial", "Ilmu Alam",
+                "Ilmu Humaniora", "Ilmu Agama"]
+RUMPUN_COLORS = {
+    "Ilmu Terapan":   "#2a78d6",
+    "Ilmu Formal":    "#eb6834",
+    "Ilmu Sosial":    "#1baf7a",
+    "Ilmu Alam":      "#eda100",
+    "Ilmu Humaniora": "#e87ba4",
+    "Ilmu Agama":     "#4a3aa7",
+}
+JENJANG_BAKU_ORDER = ["SD/MI sederajat", "SMP/MTs sederajat", "SMA/MA sederajat",
+                      "SMK/MAK sederajat", "Diploma I", "Diploma II", "Diploma III",
+                      "Sarjana Terapan", "Sarjana", "Profesi", "Spesialis",
+                      "Magister", "Magister Terapan", "Doktor", "Doktor Terapan"]
+KELOMPOK_JENJANG_COLORS = {
+    "Pendidikan Dasar":    "#eda100",
+    "Pendidikan Menengah": "#1baf7a",
+    "Pendidikan Tinggi":   "#2a78d6",
+}
+
 # Warna tunggal untuk grafik non-kategorikal (satu seri saja)
 CLR_TOOLS = "#F97316"
 CLR_EDU = "#8B5CF6"
@@ -180,7 +206,9 @@ def norm_edu(t):
         return "S1"
     if re.search(r"\bd[\s\-.]?4\b", x) or "diploma 4" in x or "div" in x:
         return "D4"
-    if re.search(r"\bd[\s\-.]?3\b|\bdiii\b", x) or "diploma 3" in x or x == "diploma":
+    # (v17) "diploma" tanpa angka TIDAK lagi disamakan dengan D3 -- menurut
+    # pembimbing artinya seluruh lulusan diploma (D1-D4).
+    if re.search(r"\bd[\s\-.]?3\b|\bdiii\b", x) or "diploma 3" in x:
         return "D3"
     if re.search(r"\bd[\s\-.]?2\b", x):
         return "D2"
@@ -325,6 +353,7 @@ page = st.sidebar.radio("Halaman", [
     "Skill Teratas & Berkembang",
     "Taksonomi Keterampilan",
     "Jenjang Pendidikan & Bidang Studi",
+    "Program Studi & Jenjang (Acuan Peraturan)",
     "Skill yang Sering Muncul Bersama",
     "Tren Permintaan Skill",
     "Gaji yang Ditawarkan",
@@ -491,7 +520,10 @@ def page_top_skills():
     st.caption("Dikelompokkan berdasarkan taksonomi Escudero et al. (2025), bukan lagi "
               "SKILL/TOOL/SOFT_SKILL/PROGRAMMING_LANGUAGE.")
     topn = st.slider("Jumlah skill ditampilkan", 10, 50, 25)
-    df = q(f"""SELECT s.name, s.label, s.escudero_broad_category, s.escudero_subcategory, COUNT(*) freq
+    # (v17) Setelah normalisasi, satu lowongan bisa menyebut dua varian yang
+    # kini bernama sama (mis. "komunikasi" dan "komunikatif"). Sumbu berlabel
+    # "Jumlah Lowongan" karena itu dihitung per lowongan, bukan per penyebutan.
+    df = q(f"""SELECT s.name, s.label, s.escudero_broad_category, s.escudero_subcategory, COUNT(DISTINCT js.job_id) freq
               FROM job_skills js JOIN skills s ON s.id = js.skill_id
               WHERE s.escudero_broad_category IN {broad_sql}
               GROUP BY s.name, s.label ORDER BY freq DESC LIMIT {topn}""")
@@ -605,7 +637,7 @@ def page_skill_by_job():
     titles = q("""SELECT title, COUNT(*) n FROM jobs
                   WHERE title != '' GROUP BY title ORDER BY n DESC LIMIT 300""")
     pick = st.selectbox("Pilih pekerjaan", titles.title.tolist())
-    df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(*) freq
+    df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(DISTINCT js.job_id) freq
               FROM jobs j JOIN job_skills js ON js.job_id = j.id
               JOIN skills s ON s.id = js.skill_id
               WHERE j.title = ? AND s.escudero_broad_category IN {broad_sql}
@@ -731,7 +763,7 @@ def page_job_detail():
     # entitas mentah -- konsisten dengan halaman lain yang memakai nama
     # kanonik, bukan varian ejaan mentah) ----
     st.subheader("💻 Tools / Software")
-    tl = q(f"""SELECT s.name, COUNT(*) n FROM jobs j JOIN job_skills js ON js.job_id=j.id
+    tl = q(f"""SELECT s.name, COUNT(DISTINCT j.id) n FROM jobs j JOIN job_skills js ON js.job_id=j.id
               JOIN skills s ON s.id=js.skill_id
               WHERE j.title=? AND s.label='TOOL' GROUP BY s.name ORDER BY n DESC LIMIT 15""", (pick,))
     if tl.empty:
@@ -828,7 +860,7 @@ def page_skill_by_location():
     locs = q("""SELECT l.name, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
                 GROUP BY l.name ORDER BY n DESC LIMIT 100""")
     pick = st.selectbox("Pilih lokasi", locs.name.tolist())
-    df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(*) freq
+    df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(DISTINCT js.job_id) freq
               FROM jobs j JOIN locations l ON l.id=j.location_id
               JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
               WHERE l.name = ? AND s.escudero_broad_category IN {broad_sql}
@@ -960,7 +992,10 @@ def page_taxonomy():
 
 def page_education():
     st.title("🎓 Jenjang Pendidikan & Bidang Studi")
-    st.caption("Distribusi jenjang pendidikan dan bidang studi yang diminta di seluruh lowongan.")
+    st.caption("Distribusi jenjang pendidikan dan bidang studi yang diminta di seluruh lowongan, "
+              "memakai istilah apa adanya seperti tertulis di lowongan. Versi yang sudah "
+              "dibakukan menurut peraturan ada di halaman **Program Studi & Jenjang "
+              "(Acuan Peraturan)**.")
 
     edu_raw = q("SELECT text FROM entities WHERE label='EDUCATION_LEVEL'")
     n_before = len(edu_raw)
@@ -1017,6 +1052,195 @@ def page_education():
                         labels={"jenjang": "Jenjang", "n": "Jumlah", "field": "Bidang Studi"},
                         title="Kombinasi jenjang x bidang studi (top 10 bidang)"),
                         use_container_width=True)
+
+
+def _ada_tabel(nama):
+    return not q("SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                 (nama,)).empty
+
+
+def page_prodi_jenjang():
+    st.title("🏛️ Program Studi & Jenjang (Acuan Peraturan)")
+    st.caption("Bidang studi dan jenjang pendidikan yang diminta lowongan, setelah dibakukan "
+              "menurut Permendikbud 154/2014, Permendikbudristek 32/2021 (Kepdirjen Diksi "
+              "27/D/M/2022), dan Kepdirjen Dikti 96/B/KPT/2025, serta ditelaah pembimbing. "
+              "Semua angka dihitung per lowongan.")
+    if not (_ada_tabel("job_bidang_studi") and _ada_tabel("job_jenjang")):
+        st.warning("Basis data yang sedang dipakai belum memuat hasil pembakuan program "
+                   "studi dan jenjang. Gunakan `ner_jobposting_v17.sqlite` atau yang lebih baru.")
+        return
+
+    tg = filter_tangguh("j")
+    n_low = q(f"SELECT COUNT(*) n FROM jobs j WHERE 1=1 {tg}").n[0]
+    n_jen = q(f"""SELECT COUNT(DISTINCT x.job_id) n FROM job_jenjang x
+                  JOIN jobs j ON j.id=x.job_id WHERE 1=1 {tg}""").n[0]
+    n_pro = q(f"""SELECT COUNT(DISTINCT x.job_id) n FROM job_bidang_studi x
+                  JOIN jobs j ON j.id=x.job_id WHERE 1=1 {tg}""").n[0]
+    n_nama = q(f"""SELECT COUNT(DISTINCT x.nama_program_studi) n FROM job_bidang_studi x
+                   JOIN jobs j ON j.id=x.job_id WHERE 1=1 {tg}""").n[0]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Lowongan", f"{n_low:,}")
+    c2.metric("Menyebut jenjang", f"{n_jen:,}")
+    c3.metric("Menyebut program studi", f"{n_pro:,}")
+    c4.metric("Program studi baku", f"{n_nama:,}")
+    persen = lambda a: f"{a / n_low * 100:.1f}".replace(".", ",")
+    st.caption(f"{persen(n_jen)}% lowongan menyebut jenjang pendidikan dan "
+               f"{persen(n_pro)}% menyebut program studi.")
+
+    # ------------------------------------------------------------ jenjang
+    st.subheader("Jenjang Pendidikan yang Diminta")
+    jen = q(f"""SELECT x.jenjang_baku, x.kelompok_jenjang, COUNT(DISTINCT x.job_id) n
+                FROM job_jenjang x JOIN jobs j ON j.id=x.job_id WHERE 1=1 {tg}
+                GROUP BY 1, 2""")
+    urut = [x for x in JENJANG_BAKU_ORDER if x in set(jen.jenjang_baku)]
+    jen["persen"] = jen.n / n_jen
+    fig = px.bar(jen, x="jenjang_baku", y="n", color="kelompok_jenjang", text="n",
+                 color_discrete_map=KELOMPOK_JENJANG_COLORS,
+                 category_orders={"jenjang_baku": urut,
+                                  "kelompok_jenjang": list(KELOMPOK_JENJANG_COLORS)},
+                 custom_data=["persen"],
+                 labels={"jenjang_baku": "Jenjang", "n": "Jumlah lowongan",
+                         "kelompok_jenjang": "Kelompok"})
+    fig.update_traces(textposition="outside", cliponaxis=False,
+                      hovertemplate="<b>%{x}</b><br>%{y:,} lowongan "
+                                    "(%{customdata[0]:.1%} dari lowongan yang menyebut jenjang)"
+                                    "<extra></extra>")
+    fig.update_layout(separators=",.", legend_title_text="", bargap=0.35)
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Satu lowongan bisa menyebut beberapa jenjang sekaligus (mis. \"SMA/SMK/D3/S1\"), "
+              "sehingga jumlah seluruh batang lebih besar dari jumlah lowongan. Penyebutan "
+              "\"diploma\" tanpa angka dihitung pada keempat jenjang diploma (D1, D2, D3, D4) "
+              "sesuai arahan pembimbing. SD/SMP/SMA/SMK tidak diatur ketiga peraturan acuan "
+              "karena seluruhnya mengatur pendidikan tinggi.")
+
+    # ------------------------------------------------------------ rumpun ilmu
+    st.subheader("Rumpun Ilmu Program Studi")
+    rum = q(f"""SELECT COALESCE(NULLIF(x.rumpun_ilmu,''),'Belum ditentukan') rumpun,
+                       COUNT(DISTINCT x.job_id) n,
+                       COUNT(DISTINCT x.nama_program_studi) n_prodi
+                FROM job_bidang_studi x JOIN jobs j ON j.id=x.job_id WHERE 1=1 {tg}
+                GROUP BY 1 ORDER BY n DESC""")
+    rum["persen"] = rum.n / n_pro
+    fig = px.bar(rum.iloc[::-1], x="n", y="rumpun", orientation="h", color="rumpun",
+                 color_discrete_map=RUMPUN_COLORS, text="n",
+                 custom_data=["persen", "n_prodi"],
+                 labels={"n": "Jumlah lowongan", "rumpun": "Rumpun ilmu"},
+                 height=max(260, 48 * len(rum)))
+    fig.update_traces(textposition="outside", cliponaxis=False,
+                      hovertemplate="<b>%{y}</b><br>%{x:,} lowongan (%{customdata[0]:.1%})"
+                                    "<br>%{customdata[1]} program studi<extra></extra>")
+    fig.update_layout(showlegend=False, separators=",.", bargap=0.35)
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Enam rumpun ilmu menurut Permendikbud 154/2014 Pasal 2. Persentase terhadap "
+              "lowongan yang menyebut program studi.")
+
+    # ------------------------------------------------------------ program studi
+    st.subheader("Program Studi yang Paling Banyak Diminta")
+    ca, cb = st.columns([1, 2])
+    with ca:
+        topn = st.slider("Jumlah program studi ditampilkan", 10, 40, 20, key="prodi_topn")
+    with cb:
+        pilih_rumpun = st.multiselect("Rumpun ilmu", RUMPUN_ORDER, default=RUMPUN_ORDER,
+                                      key="prodi_rumpun")
+    rum_sql = "('" + "','".join(pilih_rumpun or RUMPUN_ORDER) + "')"
+    pro = q(f"""SELECT x.nama_program_studi prodi, x.rumpun_ilmu rumpun,
+                       COUNT(DISTINCT x.job_id) n
+                FROM job_bidang_studi x JOIN jobs j ON j.id=x.job_id
+                WHERE x.rumpun_ilmu IN {rum_sql} {tg}
+                GROUP BY 1, 2 ORDER BY n DESC LIMIT {int(topn)}""")
+    fig = px.bar(pro.iloc[::-1], x="n", y="prodi", orientation="h", color="rumpun",
+                 color_discrete_map=RUMPUN_COLORS, text="n",
+                 category_orders={"rumpun": RUMPUN_ORDER},
+                 labels={"n": "Jumlah lowongan", "prodi": "Program studi", "rumpun": "Rumpun ilmu"},
+                 height=26 * len(pro) + 140)
+    fig.update_traces(textposition="outside", cliponaxis=False,
+                      hovertemplate="<b>%{y}</b><br>%{x:,} lowongan<extra></extra>")
+    fig.update_layout(separators=",.", legend_title_text="Rumpun ilmu", bargap=0.3,
+                      yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ------------------------------------------------------------ jenjang x rumpun
+    st.subheader("Rumpun Ilmu menurut Jenjang")
+    silang = q(f"""SELECT a.jenjang_baku, b.rumpun_ilmu rumpun, COUNT(DISTINCT a.job_id) n
+                   FROM job_jenjang a JOIN job_bidang_studi b ON a.job_id=b.job_id
+                   JOIN jobs j ON j.id=a.job_id
+                   WHERE a.kelompok_jenjang='Pendidikan Tinggi' AND b.rumpun_ilmu<>'' {tg}
+                   GROUP BY 1, 2""")
+    if silang.empty:
+        st.info("Tidak ada lowongan yang menyebut jenjang pendidikan tinggi dan program studi sekaligus.")
+    else:
+        tot = silang.groupby("jenjang_baku").n.transform("sum")
+        silang["persen"] = silang.n / tot
+        urut_j = [x for x in JENJANG_BAKU_ORDER if x in set(silang.jenjang_baku)]
+        fig = px.bar(silang, x="jenjang_baku", y="persen", color="rumpun",
+                     color_discrete_map=RUMPUN_COLORS, custom_data=["n"],
+                     category_orders={"jenjang_baku": urut_j, "rumpun": RUMPUN_ORDER},
+                     labels={"jenjang_baku": "Jenjang", "persen": "Porsi lowongan",
+                             "rumpun": "Rumpun ilmu"})
+        fig.update_traces(marker_line_color="white", marker_line_width=2,
+                          hovertemplate="<b>%{x}</b> · %{fullData.name}<br>"
+                                        "%{y:.1%} (%{customdata[0]:,} lowongan)<extra></extra>")
+        fig.update_layout(yaxis_tickformat=".0%", separators=",.",
+                          legend_title_text="Rumpun ilmu", bargap=0.35)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Hanya lowongan yang menyebut jenjang pendidikan tinggi dan program studi "
+                   "sekaligus. Tiap batang dijumlahkan menjadi 100%.")
+
+    # ------------------------------------------------------------ per jabatan KBJI
+    st.subheader("Program Studi per Jabatan (KBJI 2014)")
+    jab = q(f"""SELECT j.kbji_golongan_pokok_nama jabatan, COUNT(DISTINCT x.job_id) n
+                FROM job_bidang_studi x JOIN jobs j ON j.id=x.job_id
+                WHERE j.kbji_golongan_pokok_nama IS NOT NULL {tg}
+                GROUP BY 1 ORDER BY n DESC""")
+    opsi = [x for x in KBJI_ORDER if x in set(jab.jabatan)]
+    if opsi:
+        pj = st.selectbox("Pilih jabatan", opsi, key="prodi_jabatan")
+        d = q(f"""SELECT x.nama_program_studi prodi, x.rumpun_ilmu rumpun,
+                         COUNT(DISTINCT x.job_id) n
+                  FROM job_bidang_studi x JOIN jobs j ON j.id=x.job_id
+                  WHERE j.kbji_golongan_pokok_nama=? {tg}
+                  GROUP BY 1, 2 ORDER BY n DESC LIMIT 15""", (pj,))
+        total_j = int(jab.set_index("jabatan").n.get(pj, 0))
+        st.caption(f"{total_j:,} lowongan pada jabatan ini menyebut program studi.")
+        fig = px.bar(d.iloc[::-1], x="n", y="prodi", orientation="h", color="rumpun",
+                     color_discrete_map=RUMPUN_COLORS, text="n",
+                     category_orders={"rumpun": RUMPUN_ORDER},
+                     labels={"n": "Jumlah lowongan", "prodi": "Program studi",
+                             "rumpun": "Rumpun ilmu"},
+                     height=26 * len(d) + 140)
+        fig.update_traces(textposition="outside", cliponaxis=False,
+                          hovertemplate="<b>%{y}</b><br>%{x:,} lowongan<extra></extra>")
+        fig.update_layout(separators=",.", legend_title_text="Rumpun ilmu", bargap=0.3,
+                          yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ------------------------------------------------------------ tabel pemetaan
+    st.subheader("Tabel Pemetaan Istilah ke Program Studi Baku")
+    peta = q("""SELECT p.istilah, p.nama_program_studi, p.rumpun_ilmu, p.dasar_rumpun,
+                       p.status_penerapan
+                FROM peta_bidang_studi p
+                ORDER BY p.nama_program_studi IS NULL, p.nama_program_studi, p.istilah""")
+    n_ent = q("""SELECT LOWER(TRIM(text)) k, COUNT(*) n FROM entities
+                 WHERE label='DEGREE_FIELD' GROUP BY 1""")
+    peta["k"] = peta.istilah.str.strip().str.lower()
+    peta = peta.merge(n_ent, on="k", how="left").drop(columns="k")
+    cari = st.text_input("Cari istilah atau program studi", "", key="prodi_cari")
+    tampil = peta
+    if cari:
+        m = (peta.istilah.str.contains(cari, case=False, na=False)
+             | peta.nama_program_studi.fillna("").str.contains(cari, case=False))
+        tampil = peta[m]
+    tampil = tampil.fillna({"nama_program_studi": "—", "rumpun_ilmu": "—",
+                            "dasar_rumpun": "—"})
+    st.dataframe(
+        tampil.rename(columns={
+            "istilah": "Istilah di lowongan", "nama_program_studi": "Program studi baku",
+            "rumpun_ilmu": "Rumpun ilmu", "dasar_rumpun": "Dasar rumpun",
+            "status_penerapan": "Status", "n": "Penyebutan"}),
+        use_container_width=True, hide_index=True, height=380)
+    st.caption("Baris tanpa program studi baku adalah istilah yang dikeluarkan pembimbing "
+              "atau tidak diputuskan, sehingga tidak dihitung pada grafik di atas. Rumpun "
+              "bertanda USULAN berlaku untuk nama yang tidak tercantum pada peraturan acuan.")
 
 
 @st.cache_data
@@ -1543,6 +1767,12 @@ lebih menonjol pada pekerjaan ini daripada rata-rata pasar.*
     sub = q(f"""SELECT s.name, COUNT(*) f FROM jobs j JOIN job_skills js ON js.job_id=j.id
                 JOIN skills s ON s.id=js.skill_id
                 WHERE j.title=? AND s.escudero_broad_category IN {broad_sql} GROUP BY s.name""", (pick,))
+    # Kategori Escudero tiap skill, dipakai untuk mewarnai batang sesuai
+    # taksonomi -- sehingga langsung terlihat sebuah skill itu cognitive,
+    # socioemotional, atau manual tanpa perlu membuka halaman lain.
+    kat_skill = q(f"""SELECT name, escudero_broad_category AS kategori FROM skills
+                      WHERE escudero_broad_category IN {broad_sql}""")
+    peta_kat = dict(zip(kat_skill.name, kat_skill.kategori))
     if sub.empty:
         st.info("Belum ada data untuk pekerjaan ini.")
         return
@@ -1554,15 +1784,26 @@ lebih menonjol pada pekerjaan ini daripada rata-rata pasar.*
         share_base = base.loc[name, "f"] / total_base if name in base.index else 0
         rows.append((name, share_sub, share_base, share_sub - share_base))
     gap = pd.DataFrame(rows, columns=["skill", "share_pekerjaan", "share_baseline", "gap"])
+    gap["kategori"] = gap.skill.map(peta_kat).fillna("Lainnya")
     gap = gap.sort_values("gap", ascending=False).head(20)
+
+    warna = dict(ESCUDERO_BROAD_COLORS)
+    warna["Lainnya"] = "#9CA3AF"
     fig = px.bar(gap.iloc[::-1], x="gap", y="skill", orientation="h",
-                 color="gap", color_continuous_scale="RdBu",
-                 height=28 * len(gap) + 140,
-                 labels={"gap": "Selisih Pangsa (Pekerjaan − Pasar)", "skill": "Skill"},
+                 color="kategori", color_discrete_map=warna,
+                 height=30 * len(gap) + 190,
+                 labels={"gap": "Selisih Pangsa (Pekerjaan − Pasar)",
+                         "skill": "Skill", "kategori": "Kategori Escudero"},
                  title=f"Skill paling khas untuk '{pick}' dibanding pasar keseluruhan")
     # tampilkan SEMUA label sumbu-Y; tanpa ini Plotly melewati sebagian nama skill
     fig.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                  xanchor="left", x=0), margin=dict(t=90))
     st.plotly_chart(fig, use_container_width=True)
+    st.caption("Warna batang mengikuti kategori Escudero, sama dengan halaman "
+              "Taksonomi Keterampilan dan legenda di sidebar. Jadi terlihat langsung "
+              "apakah skill pembeda suatu pekerjaan didominasi cognitive, "
+              "socioemotional, atau manual.")
 
     tabel = gap.copy()
     tabel["rasio"] = tabel.apply(
@@ -1573,8 +1814,11 @@ lebih menonjol pada pekerjaan ini daripada rata-rata pasar.*
     tabel["gap"] = (tabel.gap * 100).round(2).astype(str) + " poin"
     tabel["rasio"] = tabel.rasio.map(lambda x: "baru di pekerjaan ini" if x == float("inf")
                                      else f"{x:.1f}×")
+    tabel = tabel[["skill", "kategori", "share_pekerjaan", "share_baseline",
+                   "gap", "rasio"]]
     st.dataframe(
-        tabel.rename(columns={"skill": "Skill", "share_pekerjaan": "Pangsa di Pekerjaan",
+        tabel.rename(columns={"skill": "Skill", "kategori": "Kategori Escudero",
+                              "share_pekerjaan": "Pangsa di Pekerjaan",
                               "share_baseline": "Pangsa di Pasar", "gap": "Selisih",
                               "rasio": "Berapa Kali Lebih Menonjol"}),
         use_container_width=True, hide_index=True)
@@ -1593,6 +1837,7 @@ PAGES = {
     "Skill Teratas & Berkembang": page_top_skills,
     "Taksonomi Keterampilan": page_taxonomy,
     "Jenjang Pendidikan & Bidang Studi": page_education,
+    "Program Studi & Jenjang (Acuan Peraturan)": page_prodi_jenjang,
     "Skill yang Sering Muncul Bersama": page_cooccurrence,
     "Tren Permintaan Skill": page_trends,
     "Gaji yang Ditawarkan": page_salary,
