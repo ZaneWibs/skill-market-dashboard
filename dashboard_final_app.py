@@ -1003,21 +1003,40 @@ def page_taxonomy():
     # (v14) Distribusi taksonomi Escudero -- ditaruh paling atas karena ini
     # kategorisasi UTAMA sekarang.
     st.subheader("Taksonomi Escudero et al. (2025)")
-    colX, colY = st.columns(2)
-    with colX:
-        st.markdown("**Kategori Luas**")
-        b = q(f"""SELECT escudero_broad_category AS kategori, COUNT(*) n FROM skills
-                 WHERE escudero_broad_category IN {broad_sql} GROUP BY kategori ORDER BY n DESC""")
-        st.plotly_chart(px.pie(b, names="kategori", values="n", hole=.4,
-                        color="kategori", color_discrete_map=ESCUDERO_BROAD_COLORS),
-                        use_container_width=True)
-    with colY:
-        st.markdown("**14 Subkategori**")
-        s_ = q(f"""SELECT escudero_subcategory AS kategori, COUNT(*) n FROM skills
-                  WHERE escudero_broad_category IN {broad_sql} GROUP BY kategori ORDER BY n DESC""")
-        st.plotly_chart(px.pie(s_, names="kategori", values="n", hole=.4,
-                        color="kategori", color_discrete_map=ESCUDERO_SUB_COLORS),
-                        use_container_width=True)
+    st.markdown("**Kategori Luas**")
+    b = q(f"""SELECT escudero_broad_category AS kategori, COUNT(*) n FROM skills
+             WHERE escudero_broad_category IN {broad_sql} GROUP BY kategori ORDER BY n DESC""")
+    st.plotly_chart(px.pie(b, names="kategori", values="n", hole=.4,
+                    color="kategori", color_discrete_map=ESCUDERO_BROAD_COLORS),
+                    use_container_width=True)
+
+    # Diagram 14 subkategori dibuat selebar halaman dengan legenda di bawah.
+    # Sebelumnya diletakkan di kolom setengah lebar: nama subkategori yang
+    # panjang membuat legenda memakan seluruh ruang sehingga lingkarannya
+    # menyusut sampai tidak terlihat.
+    st.markdown("**14 Subkategori**")
+    s_ = q(f"""SELECT escudero_broad_category AS luas, escudero_subcategory AS kategori, COUNT(*) n
+              FROM skills WHERE escudero_broad_category IN {broad_sql}
+              GROUP BY luas, kategori ORDER BY n DESC""")
+    urutan_sub = [k for k in ESCUDERO_SUB_COLORS if k in s_.kategori.values] + \
+                 [k for k in s_.kategori if k not in ESCUDERO_SUB_COLORS]
+    _fs = px.pie(s_, names="kategori", values="n", hole=.4, color="kategori",
+                 color_discrete_map=ESCUDERO_SUB_COLORS, hover_data=["luas"],
+                 category_orders={"kategori": urutan_sub},
+                 labels={"kategori": "Subkategori", "n": "Jumlah Skill", "luas": "Kategori Luas"})
+    _fs.update_traces(sort=False, textinfo="percent", textposition="inside",
+                      insidetextorientation="horizontal")
+    _fs.update_layout(height=640, uniformtext_minsize=10, uniformtext_mode="hide",
+                      legend=dict(orientation="h", yanchor="top", y=-0.05,
+                                  xanchor="center", x=0.5, title_text=""),
+                      margin=dict(t=20, b=20))
+    st.plotly_chart(_fs, use_container_width=True)
+    with st.expander("Tabel 14 subkategori"):
+        _t = s_.copy()
+        _t["persen"] = (_t.n / _t.n.sum() * 100).round(1)
+        st.dataframe(_t.rename(columns={"luas": "Kategori Luas", "kategori": "Subkategori",
+                                        "n": "Jumlah Skill", "persen": "Persen (%)"}),
+                     use_container_width=True, hide_index=True)
 
     st.subheader("Distribusi Atribut Layer 2 (tingkat skill unik)")
     cols = st.columns(2)
