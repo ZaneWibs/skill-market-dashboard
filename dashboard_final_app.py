@@ -500,21 +500,33 @@ def page_overview():
 
     # (v14) Kategori skill Escudero et al. (2025) -- kategorisasi UTAMA
     st.subheader("Kategori Skill (Taksonomi Escudero et al. 2025)")
-    colE1, colE2 = st.columns(2)
-    with colE1:
-        st.markdown("**Kategori Luas**")
-        broad = q("SELECT escudero_broad_category, COUNT(*) n FROM skills GROUP BY 1 ORDER BY 2 DESC")
-        st.plotly_chart(px.pie(broad, names="escudero_broad_category", values="n", hole=.4,
-                        color="escudero_broad_category", color_discrete_map=ESCUDERO_BROAD_COLORS),
-                        use_container_width=True)
-    with colE2:
-        st.markdown("**14 Subkategori**")
-        sub = q("SELECT escudero_subcategory, COUNT(*) n FROM skills GROUP BY 1 ORDER BY 2 DESC")
-        st.plotly_chart(px.bar(sub.iloc[::-1], x="n", y="escudero_subcategory", orientation="h",
-                        color="escudero_subcategory", color_discrete_map=ESCUDERO_SUB_COLORS,
-                        labels={"n": "Jumlah", "escudero_subcategory": "Subkategori"},
-                        height=420),
-                        use_container_width=True)
+    # Kedua diagram dibuat selebar halaman. Bila diletakkan berdampingan,
+    # nama 14 subkategori yang panjang memenuhi kolom setengah lebar sehingga
+    # diagramnya menyusut sampai tidak terlihat.
+    st.markdown("**Kategori Luas**")
+    broad = q("SELECT escudero_broad_category, COUNT(*) n FROM skills GROUP BY 1 ORDER BY 2 DESC")
+    st.plotly_chart(px.pie(broad, names="escudero_broad_category", values="n", hole=.4,
+                    color="escudero_broad_category", color_discrete_map=ESCUDERO_BROAD_COLORS,
+                    labels={"escudero_broad_category": "Kategori Luas", "n": "Jumlah Skill"}),
+                    use_container_width=True)
+
+    st.markdown("**14 Subkategori**")
+    sub = q("""SELECT escudero_broad_category AS luas, escudero_subcategory, COUNT(*) n
+               FROM skills GROUP BY 1, 2 ORDER BY 3 DESC""")
+    urutan_sub = [k for k in ESCUDERO_SUB_COLORS if k in sub.escudero_subcategory.values] + \
+                 [k for k in sub.escudero_subcategory if k not in ESCUDERO_SUB_COLORS]
+    _fs = px.pie(sub, names="escudero_subcategory", values="n", hole=.4,
+                 color="escudero_subcategory", color_discrete_map=ESCUDERO_SUB_COLORS,
+                 hover_data=["luas"], category_orders={"escudero_subcategory": urutan_sub},
+                 labels={"escudero_subcategory": "Subkategori", "n": "Jumlah Skill",
+                         "luas": "Kategori Luas"})
+    _fs.update_traces(sort=False, textinfo="percent", textposition="inside",
+                      insidetextorientation="horizontal")
+    _fs.update_layout(height=640, uniformtext_minsize=10, uniformtext_mode="hide",
+                      legend=dict(orientation="h", yanchor="top", y=-0.05,
+                                  xanchor="center", x=0.5, title_text=""),
+                      margin=dict(t=20, b=20))
+    st.plotly_chart(_fs, use_container_width=True)
 
     colA, colB = st.columns(2)
     with colA:
