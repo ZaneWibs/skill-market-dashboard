@@ -596,12 +596,19 @@ def page_kbji_classification():
                     use_container_width=True)
 
     _and = "AND COALESCE(kbji_ditangguhkan,0)=0" if ADA_TANGGUH else ""
-    tab1, tab2 = st.tabs(["Jelajah per Jabatan", "Kualitas Klasifikasi (QA)"])
+    ADA_KODE4 = "kbji_kode4" in _kolom_jobs
+    if ADA_KODE4:
+        tab1, tab3, tab2 = st.tabs(["Jelajah per Jabatan", "Kode 4 Digit (Pendukung)",
+                                    "Kualitas Klasifikasi (QA)"])
+    else:
+        tab1, tab2 = st.tabs(["Jelajah per Jabatan", "Kualitas Klasifikasi (QA)"])
 
     with tab1:
         pilihan = [g for g in KBJI_ORDER if g in dist.jabatan.values]
         pick = st.selectbox("Pilih jabatan", pilihan)
-        df = q(f"""SELECT title AS pekerjaan, COUNT(*) n, AVG(kbji_confidence) conf
+        _k4 = ("kbji_kode4 AS kode4, kbji_label4 AS label4, "
+               if "kbji_kode4" in _kolom_jobs else "")
+        df = q(f"""SELECT title AS pekerjaan, {_k4}COUNT(*) n, AVG(kbji_confidence) conf
                    FROM jobs WHERE kbji_golongan_pokok_nama = ? {_and}
                    GROUP BY title ORDER BY n DESC""", (pick,))
         view, info = paginate(df, "kbji_jelajah")
@@ -619,8 +626,58 @@ def page_kbji_classification():
         _fig.update_xaxes(dtick=1)
         st.plotly_chart(_fig, use_container_width=True)
         st.dataframe(
-            view.rename(columns={"pekerjaan": "Pekerjaan", "n": "Jumlah Lowongan", "conf": "Confidence Rata-rata"}),
+            view.rename(columns={"pekerjaan": "Pekerjaan", "kode4": "Kode KBJI 4 Digit",
+                                 "label4": "Label KBJI 4 Digit",
+                                 "n": "Jumlah Lowongan", "conf": "Confidence Rata-rata"}),
             use_container_width=True, hide_index=True)
+
+    if ADA_KODE4:
+        with tab3:
+            st.caption("Subgolongan KBJI 2014 (4 digit) untuk setiap judul pekerjaan, hasil "
+                      "pemetaan berbasis aturan yang ditelaah pembimbing. Ini informasi "
+                      "pendukung; analisis utama tetap pada golongan pokok (1 digit). "
+                      "Judul yang terlalu umum tidak diberi kode 4 digit.")
+            n_isi = q(f"SELECT COUNT(*) n FROM jobs WHERE kbji_kode4 IS NOT NULL {_and}").n[0]
+            c1, c2 = st.columns(2)
+            c1.metric("Lowongan berkode 4 digit", f"{n_isi:,}",
+                      f"{n_isi / dist.n.sum():.1%} dari total")
+            c2.metric("Jumlah kode 4 digit terpakai",
+                      f"{q(f'SELECT COUNT(DISTINCT kbji_kode4) n FROM jobs WHERE kbji_kode4 IS NOT NULL {_and}').n[0]:,}")
+            g4 = st.selectbox("Golongan pokok", ["Semua"] + pilihan, key="kbji4_gol")
+            _w = "" if g4 == "Semua" else "AND kbji_golongan_pokok_nama = ?"
+            _p = () if g4 == "Semua" else (g4,)
+            rek = q(f"""SELECT kbji_kode4 AS kode4, kbji_label4 AS label4,
+                               kbji_golongan_pokok_nama AS jabatan,
+                               COUNT(*) n, COUNT(DISTINCT title) n_judul
+                        FROM jobs WHERE kbji_kode4 IS NOT NULL {_and} {_w}
+                        GROUP BY kbji_kode4 ORDER BY n DESC""", _p)
+            _top = rek.head(20).copy()
+            _top["nama"] = _top.kode4 + " " + _top.label4.fillna("")
+            _fig = px.bar(_top.iloc[::-1], x="n", y="nama", orientation="h", color="jabatan",
+                          color_discrete_map=KBJI_COLORS, height=30 * len(_top) + 150,
+                          labels={"n": "Jumlah Lowongan", "nama": "Kode 4 Digit",
+                                  "jabatan": "Golongan Pokok"})
+            _fig.update_yaxes(tickmode="linear", dtick=1, automargin=True,
+                              categoryorder="total ascending")
+            st.markdown("**20 kode 4 digit dengan lowongan terbanyak**")
+            st.plotly_chart(_fig, use_container_width=True)
+            st.dataframe(rek.rename(columns={"kode4": "Kode 4 Digit", "label4": "Label",
+                                             "jabatan": "Golongan Pokok", "n": "Jumlah Lowongan",
+                                             "n_judul": "Jumlah Judul Pekerjaan"}),
+                         use_container_width=True, hide_index=True)
+
+            if not rek.empty:
+                pk = st.selectbox("Lihat rincian kode",
+                                  (rek.kode4 + " " + rek.label4.fillna("")).tolist(), key="kbji4_kode")
+                kd = pk.split(" ")[0]
+                if _ada_tabel("kbji_subgolongan"):
+                    ur = q("SELECT pengertian FROM kbji_subgolongan WHERE kode = ?", (kd,))
+                    if not ur.empty and ur.pengertian[0]:
+                        st.info(f"**Pengertian (KBJI 2014):** {ur.pengertian[0]}")
+                jd = q(f"""SELECT title AS Pekerjaan, COUNT(*) AS "Jumlah Lowongan"
+                           FROM jobs WHERE kbji_kode4 = ? {_and}
+                           GROUP BY title ORDER BY 2 DESC""", (kd,))
+                st.dataframe(jd, use_container_width=True, hide_index=True)
 
     with tab2:
         st.caption("Klasifikasi dengan confidence rendah lebih berisiko salah -- berguna untuk "
