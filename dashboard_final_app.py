@@ -214,14 +214,16 @@ def norm_edu(t):
         return "D2"
     if re.search(r"\bd[\s\-.]?1\b", x):
         return "D1"
-    if "diploma" in x:
+    if "diploma" in x or x == "diplima":
         return "Diploma"
-    if "mahasiswa" in x or "semester" in x or "enrolled" in x or "recent graduate" in x:
+    if re.search(r"s[\s\-.]?[1i]\b", x) and ("pend" in x or "semua" in x):
+        return "S1"
+    if "mahasisw" in x or "semester" in x or "semster" in x or "enrolled" in x or "recent graduate" in x:
         return "Mahasiswa"
     if "sma/k" in x or "smk/a" in x:
         return "SMA/SMK"
-    has_sma = "sma" in x or "smu" in x or "slta" in x
-    has_smk = "smk" in x or "stm" in x
+    has_sma = "sma" in x or "smu" in x or "slta" in x or "madrasah aliyah" in x
+    has_smk = "smk" in x or "stm" in x or "menengah kejuruan" in x
     if has_sma and has_smk:
         return "SMA/SMK"
     if has_smk:
@@ -234,11 +236,13 @@ def norm_edu(t):
         return "SMP"
     if x == "sd" or "sekolah dasar" in x:
         return "SD"
-    return t.strip()
+    # Di luar 14 jenjang umum (profesi, sertifikat keahlian, teks yang salah
+    # terdeteksi, dll.) dikelompokkan sebagai "Lainnya" atas saran pembimbing.
+    return "Lainnya"
 
 
 EDU_ORDER = ["SD", "SMP", "SMA", "SMK", "SMA/SMK", "Mahasiswa",
-            "D1", "D2", "D3", "D4", "Diploma", "S1", "S2", "S3"]
+            "D1", "D2", "D3", "D4", "Diploma", "S1", "S2", "S3", "Lainnya"]
 
 
 def edu_sort_key(categories):
@@ -297,6 +301,21 @@ def _q_cached(sql, params, sidik):
 
 def q(sql, params=()):
     return _q_cached(sql, params, _sidik_db())
+
+
+def kol_lok():
+    """Lokasi dianalisis per provinsi (saran pembimbing). DB lama tanpa kolom
+    provinsi kembali ke nama lokasi asli."""
+    kol = q("SELECT * FROM locations LIMIT 1").columns
+    return "provinsi" if "provinsi" in kol else "name"
+
+
+def kol_pek():
+    """Kolom yang dipakai sebagai 'pekerjaan'. Atas saran pembimbing, pekerjaan
+    diwakili label KBJI 2014 4 digit; bila 4 digit tidak teridentifikasi dipakai
+    label golongan pokok (1 digit). DB lama tanpa kolom ini kembali ke judul asli."""
+    kol = q("SELECT * FROM jobs LIMIT 1").columns
+    return "pekerjaan_kbji" if "pekerjaan_kbji" in kol else "title"
 
 
 def relabel(df, col="label"):
@@ -540,16 +559,28 @@ def page_top_skills():
 
 
 def page_job_title_summary():
+    P = kol_pek()
     st.title("📋 Jumlah Lowongan per Pekerjaan")
     st.caption("Seluruh pekerjaan yang ada beserta jumlah lowongannya, diurutkan dari yang terbanyak.")
-    df = q("""SELECT title, COUNT(*) n FROM jobs
-              WHERE title != '' GROUP BY title ORDER BY n DESC""")
+    if P == "pekerjaan_kbji":
+        st.caption("Pekerjaan = label KBJI 2014 tingkat 4 digit (subgolongan). Bila kode 4 digit "
+                  "tidak teridentifikasi karena judul lowongan terlalu umum, dipakai label "
+                  "golongan pokok (1 digit). Berlaku untuk semua halaman yang memakai 'pekerjaan'.")
+        df = q("""SELECT pekerjaan_kbji AS title, pekerjaan_kbji_kode AS kode,
+                         pekerjaan_kbji_tingkat AS tingkat, COUNT(*) n,
+                         COUNT(DISTINCT title) n_judul
+                  FROM jobs GROUP BY 1, 2, 3 ORDER BY n DESC""")
+    else:
+        df = q(f"""SELECT {P} AS title, COUNT(*) n FROM jobs
+                  WHERE {P} != '' GROUP BY {P} ORDER BY n DESC""")
     cari = st.text_input("Cari nama pekerjaan (opsional)", "")
     if cari:
         df = df[df.title.str.contains(cari, case=False, na=False)]
     view, info = paginate(df, "jobtitle_summary")
     st.caption(info)
-    view = view.rename(columns={"title": "Pekerjaan", "n": "Jumlah Lowongan"})
+    view = view.rename(columns={"title": "Pekerjaan", "kode": "Kode KBJI",
+                                "tingkat": "Tingkat Kode", "n": "Jumlah Lowongan",
+                                "n_judul": "Jumlah Judul Lowongan Asli"})
     view.index = view.index + 1
     st.dataframe(view, use_container_width=True)
 
@@ -692,14 +723,15 @@ def page_kbji_classification():
 
 
 def page_skill_by_job():
+    P = kol_pek()
     st.title("💼 Skill per Pekerjaan")
-    titles = q("""SELECT title, COUNT(*) n FROM jobs
-                  WHERE title != '' GROUP BY title ORDER BY n DESC LIMIT 300""")
+    titles = q(f"""SELECT {P} AS title, COUNT(*) n FROM jobs
+                  WHERE {P} != '' GROUP BY {P} ORDER BY n DESC LIMIT 300""")
     pick = st.selectbox("Pilih pekerjaan", titles.title.tolist())
     df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(DISTINCT js.job_id) freq
               FROM jobs j JOIN job_skills js ON js.job_id = j.id
               JOIN skills s ON s.id = js.skill_id
-              WHERE j.title = ? AND s.escudero_broad_category IN {broad_sql}
+              WHERE j.{P} = ? AND s.escudero_broad_category IN {broad_sql}
               GROUP BY s.name, s.label ORDER BY freq DESC LIMIT 25""", (pick,))
     if df.empty:
         st.info("Belum ada skill tercatat untuk pekerjaan ini.")
@@ -711,19 +743,26 @@ def page_skill_by_job():
 
 
 def page_job_detail():
+    P = kol_pek()
     st.title("🧭 Detail Kebutuhan per Pekerjaan")
     st.caption("Untuk pekerjaan terpilih: skill lengkap dengan taksonomi Layer 2 "
               "(domain, transferability, importance, proficiency), tools, jenjang pendidikan, "
               "dan bidang studi yang diminta.")
-    titles = q("""SELECT title, COUNT(*) n FROM jobs WHERE title != ''
-                  GROUP BY title ORDER BY n DESC LIMIT 300""")
+    titles = q(f"""SELECT {P} AS title, COUNT(*) n FROM jobs WHERE {P} != ''
+                  GROUP BY {P} ORDER BY n DESC LIMIT 300""")
     pick = st.selectbox("Pilih pekerjaan", titles.title.tolist())
     n_job = int(titles.loc[titles.title == pick, "n"].iloc[0])
     st.markdown(f"### {pick} · {n_job} lowongan")
+    if P == "pekerjaan_kbji":
+        with st.expander("Judul lowongan asli yang termasuk pekerjaan ini"):
+            st.dataframe(q("""SELECT title AS "Judul Lowongan", COUNT(*) AS "Jumlah Lowongan"
+                              FROM jobs WHERE pekerjaan_kbji = ? GROUP BY title
+                              ORDER BY 2 DESC""", (pick,)),
+                         use_container_width=True, hide_index=True)
 
     # (v14) Jabatan KBJI 2014 untuk pekerjaan ini
-    kbji_info = q("""SELECT kbji_golongan_pokok_nama, kbji_confidence FROM jobs
-                     WHERE title = ? LIMIT 1""", (pick,))
+    kbji_info = q(f"""SELECT kbji_golongan_pokok_nama, kbji_confidence FROM jobs
+                     WHERE {P} = ? LIMIT 1""", (pick,))
     if not kbji_info.empty:
         gnama = kbji_info.kbji_golongan_pokok_nama.iloc[0]
         gconf = kbji_info.kbji_confidence.iloc[0]
@@ -745,7 +784,7 @@ def page_job_detail():
                SUM(CASE WHEN js.importance='PREFERRED' THEN 1 ELSE 0 END) AS diutamakan,
                SUM(CASE WHEN js.proficiency='ADVANCED' THEN 1 ELSE 0 END) AS mahir
         FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-        WHERE j.title = ? AND s.escudero_broad_category IN {broad_sql}
+        WHERE j.{P} = ? AND s.escudero_broad_category IN {broad_sql}
         GROUP BY s.name, s.label ORDER BY frekuensi DESC LIMIT 40""", (pick,))
     if skill_tax.empty:
         st.info("Belum ada skill tercatat untuk pekerjaan ini.")
@@ -771,7 +810,7 @@ def page_job_detail():
     with c0:
         esc = q(f"""SELECT s.escudero_broad_category AS kat, COUNT(*) n
                     FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-                    WHERE j.title=? AND s.escudero_broad_category IN {broad_sql}
+                    WHERE j.{P}=? AND s.escudero_broad_category IN {broad_sql}
                     GROUP BY kat ORDER BY n DESC""", (pick,))
         st.markdown("**Kategori Escudero**")
         if not esc.empty:
@@ -783,7 +822,7 @@ def page_job_detail():
     with c1:
         dom = q(f"""SELECT s.skill_domain AS domain, COUNT(*) n
                     FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-                    WHERE j.title=? AND s.escudero_broad_category IN {broad_sql}
+                    WHERE j.{P}=? AND s.escudero_broad_category IN {broad_sql}
                     GROUP BY s.skill_domain ORDER BY n DESC""", (pick,))
         st.markdown("**Domain**")
         if not dom.empty:
@@ -796,7 +835,7 @@ def page_job_detail():
     with c2:
         tr = q(f"""SELECT s.transferability AS t, COUNT(*) n
                    FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-                   WHERE j.title=? AND s.escudero_broad_category IN {broad_sql}
+                   WHERE j.{P}=? AND s.escudero_broad_category IN {broad_sql}
                    GROUP BY s.transferability ORDER BY n DESC""", (pick,))
         st.markdown("**Transferability**")
         if not tr.empty:
@@ -808,7 +847,7 @@ def page_job_detail():
     with c3:
         imp = q(f"""SELECT COALESCE(NULLIF(js.importance,''),'UNKNOWN') AS imp, COUNT(*) n
                     FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-                    WHERE j.title=? AND s.escudero_broad_category IN {broad_sql}
+                    WHERE j.{P}=? AND s.escudero_broad_category IN {broad_sql}
                     GROUP BY imp ORDER BY n DESC""", (pick,))
         st.markdown("**Importance**")
         if not imp.empty:
@@ -824,7 +863,7 @@ def page_job_detail():
     st.subheader("💻 Tools / Software")
     tl = q(f"""SELECT s.name, COUNT(DISTINCT j.id) n FROM jobs j JOIN job_skills js ON js.job_id=j.id
               JOIN skills s ON s.id=js.skill_id
-              WHERE j.title=? AND s.label='TOOL' GROUP BY s.name ORDER BY n DESC LIMIT 15""", (pick,))
+              WHERE j.{P}=? AND s.label='TOOL' GROUP BY s.name ORDER BY n DESC LIMIT 15""", (pick,))
     if tl.empty:
         st.info("Tidak ada tool spesifik tercatat.")
     else:
@@ -838,8 +877,8 @@ def page_job_detail():
     c4, c5 = st.columns(2)
     with c4:
         st.markdown("**Jenjang Pendidikan**")
-        edu = q("""SELECT e.text FROM jobs j JOIN entities e ON e.job_id=j.id
-                   WHERE j.title=? AND e.label='EDUCATION_LEVEL'""", (pick,))
+        edu = q(f"""SELECT e.text FROM jobs j JOIN entities e ON e.job_id=j.id
+                   WHERE j.{P}=? AND e.label='EDUCATION_LEVEL'""", (pick,))
         edu = edu[drop_experience_leak(edu.text)]
         if edu.empty:
             st.info("Tidak dicantumkan.")
@@ -854,8 +893,8 @@ def page_job_detail():
                             use_container_width=True)
     with c5:
         st.markdown("**Bidang Studi (Degree Field)**")
-        deg = q("""SELECT LOWER(e.text) field, COUNT(*) n FROM jobs j JOIN entities e ON e.job_id=j.id
-                   WHERE j.title=? AND e.label='DEGREE_FIELD'
+        deg = q(f"""SELECT LOWER(e.text) field, COUNT(*) n FROM jobs j JOIN entities e ON e.job_id=j.id
+                   WHERE j.{P}=? AND e.label='DEGREE_FIELD'
                    GROUP BY LOWER(e.text) ORDER BY n DESC LIMIT 15""", (pick,))
         if deg.empty:
             st.info("Tidak dicantumkan.")
@@ -867,17 +906,19 @@ def page_job_detail():
 
 
 def page_location_job_title():
+    L = kol_lok()
+    P = kol_pek()
     st.title("📍🗂️ Lokasi & Pekerjaan")
-    tab1, tab2 = st.tabs(["Pilih Lokasi", "Ringkasan Semua Lokasi"])
+    tab1, tab2 = st.tabs(["Pilih Provinsi", "Ringkasan Semua Provinsi"])
 
     with tab1:
-        st.caption("Pilih satu lokasi untuk melihat semua pekerjaan yang ada di sana, "
+        st.caption("Pilih satu provinsi untuk melihat semua pekerjaan yang ada di sana, "
                   "diurutkan dari jumlah lowongan terbanyak.")
-        locs = q("""SELECT l.name, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
-                    WHERE l.name != '' GROUP BY l.name ORDER BY n DESC LIMIT 300""")
-        pick = st.selectbox("Pilih lokasi", locs.name.tolist(), key="locjob_pick")
-        df = q("""SELECT j.title, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
-                  WHERE l.name=? AND j.title!='' GROUP BY j.title ORDER BY n DESC""", (pick,))
+        locs = q(f"""SELECT l.{L} AS name, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
+                    WHERE l.{L} != '' GROUP BY l.{L} ORDER BY n DESC LIMIT 300""")
+        pick = st.selectbox("Pilih provinsi" if L == "provinsi" else "Pilih lokasi", locs.name.tolist(), key="locjob_pick")
+        df = q(f"""SELECT j.{P} AS title, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
+                  WHERE l.{L}=? AND j.{P}!='' GROUP BY j.{P} ORDER BY n DESC""", (pick,))
         if df.empty:
             st.info("Belum ada data pekerjaan untuk lokasi ini.")
         else:
@@ -895,12 +936,12 @@ def page_location_job_title():
                 use_container_width=True, hide_index=True)
 
     with tab2:
-        st.caption("Satu baris per lokasi: total lowongan dan jumlah pekerjaan unik di sana. "
+        st.caption("Satu baris per provinsi: total lowongan dan jumlah pekerjaan unik di sana. "
                   "Bisa diurutkan dari lowongan terbanyak ATAU variasi pekerjaan terbanyak.")
-        ring = q("""SELECT l.name AS lokasi, COUNT(*) AS total_lowongan,
-                          COUNT(DISTINCT j.title) AS jumlah_pekerjaan_unik
+        ring = q(f"""SELECT l.{L} AS lokasi, COUNT(*) AS total_lowongan,
+                          COUNT(DISTINCT j.{P}) AS jumlah_pekerjaan_unik
                    FROM jobs j JOIN locations l ON l.id = j.location_id
-                   WHERE l.name != '' GROUP BY l.name""")
+                   WHERE l.{L} != '' GROUP BY l.{L}""")
         urut = st.radio("Urutkan berdasarkan",
                         ["Total Lowongan Terbanyak", "Variasi Pekerjaan Terbanyak"],
                         horizontal=True, key="locjob_ringkasan_urut")
@@ -908,21 +949,42 @@ def page_location_job_title():
         ring = ring.sort_values(kolom, ascending=False)
         view, info = paginate(ring, "locjob_ringkasan")
         st.caption(info)
+        if L == "provinsi":
+            _g = ring.sort_values("total_lowongan")
+            _f = px.bar(_g, x="total_lowongan", y="lokasi", orientation="h",
+                        height=22 * len(_g) + 120, color_discrete_sequence=["#2a78d6"],
+                        labels={"total_lowongan": "Jumlah Lowongan", "lokasi": "Provinsi"})
+            _f.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+            st.markdown("**Jumlah lowongan per provinsi**")
+            st.plotly_chart(_f, use_container_width=True)
         st.dataframe(
-            view.rename(columns={"lokasi": "Lokasi", "total_lowongan": "Total Lowongan",
+            view.rename(columns={"lokasi": "Provinsi" if L == "provinsi" else "Lokasi",
+                                 "total_lowongan": "Total Lowongan",
                                  "jumlah_pekerjaan_unik": "Pekerjaan Unik"}),
             use_container_width=True, hide_index=True)
+        if L == "provinsi":
+            with st.expander("Pemetaan lokasi asli ke provinsi"):
+                st.caption("Lokasi pada lowongan (kota/kabupaten/kecamatan) dipetakan ke provinsi "
+                          "dengan data wilayah administrasi Indonesia (38 provinsi). Nama kecamatan "
+                          "yang ada di lebih dari satu provinsi dipilih berdasarkan kab/kota yang "
+                          "paling banyak muncul di data dan ditandai pada kolom Metode.")
+                st.dataframe(q("""SELECT l.name AS "Lokasi Asli", l.provinsi AS Provinsi,
+                                         l.metode_provinsi AS Metode, COUNT(j.id) AS "Jumlah Lowongan"
+                                  FROM locations l JOIN jobs j ON j.location_id = l.id
+                                  GROUP BY l.id ORDER BY 4 DESC"""),
+                             use_container_width=True, hide_index=True)
 
 
 def page_skill_by_location():
+    L = kol_lok()
     st.title("📍 Skill per Lokasi")
-    locs = q("""SELECT l.name, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
-                GROUP BY l.name ORDER BY n DESC LIMIT 100""")
-    pick = st.selectbox("Pilih lokasi", locs.name.tolist())
+    locs = q(f"""SELECT l.{L} AS name, COUNT(*) n FROM jobs j JOIN locations l ON l.id=j.location_id
+                GROUP BY l.{L} ORDER BY n DESC LIMIT 100""")
+    pick = st.selectbox("Pilih provinsi" if L == "provinsi" else "Pilih lokasi", locs.name.tolist())
     df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(DISTINCT js.job_id) freq
               FROM jobs j JOIN locations l ON l.id=j.location_id
               JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
-              WHERE l.name = ? AND s.escudero_broad_category IN {broad_sql}
+              WHERE l.{L} = ? AND s.escudero_broad_category IN {broad_sql}
               GROUP BY s.name, s.label ORDER BY freq DESC LIMIT 25""", (pick,))
     if df.empty:
         st.info("Belum ada data untuk lokasi ini.")
@@ -1052,9 +1114,9 @@ def page_taxonomy():
 def page_education():
     st.title("🎓 Jenjang Pendidikan & Bidang Studi")
     st.caption("Distribusi jenjang pendidikan dan bidang studi yang diminta di seluruh lowongan, "
-              "memakai istilah apa adanya seperti tertulis di lowongan. Versi yang sudah "
-              "dibakukan menurut peraturan ada di halaman **Program Studi & Jenjang "
-              "(Acuan Peraturan)**.")
+              "Jenjang di luar 14 jenjang umum dikelompokkan sebagai 'Lainnya'; bidang studi "
+              "memakai nama program studi hasil pemetaan yang ditelaah pembimbing. Rincian "
+              "menurut peraturan ada di halaman **Program Studi & Jenjang (Acuan Peraturan)**.")
 
     edu_raw = q("SELECT text FROM entities WHERE label='EDUCATION_LEVEL'")
     n_before = len(edu_raw)
@@ -1078,29 +1140,62 @@ def page_education():
             st.plotly_chart(px.bar(g, x="jenjang", y="n", color_discrete_sequence=[CLR_EDU],
                             labels={"jenjang": "Jenjang", "n": "Jumlah"}),
                             use_container_width=True)
+            lain = edu_raw[edu_raw.jenjang == "Lainnya"]
+            if not lain.empty:
+                with st.expander(f"Isi kelompok 'Lainnya' ({len(lain):,} sebutan)"):
+                    st.dataframe(lain.text.str.strip().value_counts().reset_index()
+                                 .set_axis(["Teks Asli", "Jumlah"], axis=1),
+                                 use_container_width=True, hide_index=True)
     with c2:
         st.subheader("Bidang Studi Terbanyak")
-        deg = q("""SELECT LOWER(text) field, COUNT(*) n FROM entities WHERE label='DEGREE_FIELD'
-                   GROUP BY LOWER(text) ORDER BY n DESC LIMIT 20""")
+        # Istilah yang sama maknanya (mis. "marketing" dan "pemasaran", "accounting"
+        # dan "akuntansi") digabung memakai pemetaan program studi yang sudah
+        # ditelaah pembimbing (tabel job_bidang_studi). DB lama: teks apa adanya.
+        BS_BAKU = _ada_tabel("job_bidang_studi")
+        if BS_BAKU:
+            deg = q("""SELECT nama_program_studi field, COUNT(DISTINCT job_id) n
+                       FROM job_bidang_studi GROUP BY 1 ORDER BY n DESC LIMIT 20""")
+        else:
+            deg = q("""SELECT LOWER(text) field, COUNT(*) n FROM entities WHERE label='DEGREE_FIELD'
+                       GROUP BY LOWER(text) ORDER BY n DESC LIMIT 20""")
         if deg.empty:
             st.info("Belum ada data.")
         else:
-            st.plotly_chart(px.bar(deg.iloc[::-1], x="n", y="field", orientation="h",
-                            color_discrete_sequence=[CLR_DEGREE],
-                            labels={"n": "Jumlah", "field": "Bidang Studi"}),
-                            use_container_width=True)
+            _fd = px.bar(deg.iloc[::-1], x="n", y="field", orientation="h",
+                         height=24 * len(deg) + 140, color_discrete_sequence=[CLR_DEGREE],
+                         labels={"n": "Jumlah Lowongan" if BS_BAKU else "Jumlah",
+                                 "field": "Bidang Studi"})
+            _fd.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+            st.plotly_chart(_fd, use_container_width=True)
+            if BS_BAKU:
+                st.caption("Istilah bersinonim sudah digabung sesuai pemetaan program studi "
+                          "yang ditelaah pembimbing, mis. marketing, pemasaran, manajemen "
+                          "pemasaran, dan digital marketing → Manajemen.")
+                with st.expander("Lihat istilah asli yang digabung"):
+                    st.dataframe(q("""SELECT nama_program_studi AS "Bidang Studi",
+                                             istilah AS "Istilah di Lowongan",
+                                             COUNT(DISTINCT job_id) AS "Jumlah Lowongan"
+                                      FROM job_bidang_studi GROUP BY 1, 2
+                                      ORDER BY 1, 3 DESC"""),
+                                 use_container_width=True, hide_index=True)
 
     st.subheader("Bidang Studi yang Diminta per Jenjang")
-    cross = q("""SELECT e1.text edu, e2.text field
-                 FROM entities e1 JOIN entities e2 ON e1.job_id = e2.job_id
-                 WHERE e1.label='EDUCATION_LEVEL' AND e2.label='DEGREE_FIELD'""")
+    if _ada_tabel("job_bidang_studi"):
+        cross = q("""SELECT DISTINCT e1.job_id, e1.text edu, b.nama_program_studi field
+                     FROM entities e1 JOIN job_bidang_studi b ON e1.job_id = b.job_id
+                     WHERE e1.label='EDUCATION_LEVEL'""")
+    else:
+        cross = q("""SELECT e1.text edu, e2.text field
+                     FROM entities e1 JOIN entities e2 ON e1.job_id = e2.job_id
+                     WHERE e1.label='EDUCATION_LEVEL' AND e2.label='DEGREE_FIELD'""")
     cross = cross[drop_experience_leak(cross.edu)]
     if cross.empty:
         st.info("Tidak ada lowongan yang mencantumkan keduanya sekaligus.")
     else:
         cross = cross.copy()
         cross["jenjang"] = cross["edu"].map(norm_edu)
-        cross["field"] = cross["field"].str.lower()
+        if not _ada_tabel("job_bidang_studi"):
+            cross["field"] = cross["field"].str.lower()
         top_fields = cross["field"].value_counts().head(10).index
         sub = cross[cross["field"].isin(top_fields)]
         pivot = sub.groupby(["jenjang", "field"]).size().reset_index(name="n")
@@ -1682,8 +1777,9 @@ def page_salary():
         min_n = st.slider("Jumlah lowongan minimal per pekerjaan", 3, 50, 10,
                           help="Median dari sedikit lowongan sangat tidak stabil. "
                                "Turunkan bila ingin melihat pekerjaan yang jarang muncul.")
-        d = q(f"""SELECT title AS pekerjaan, {kolom_gaji} AS gaji
-                  FROM jobs {FILTER} AND title != ''""")
+        P = kol_pek()
+        d = q(f"""SELECT {P} AS pekerjaan, {kolom_gaji} AS gaji
+                  FROM jobs {FILTER} AND {P} != ''""")
         g = (d.groupby("pekerjaan")["gaji"]
              .agg(median="median", count="count", p25=lambda x: x.quantile(.25),
                   p75=lambda x: x.quantile(.75))
@@ -1696,7 +1792,7 @@ def page_salary():
         st.caption(
             f"**{len(g):,} pekerjaan** memenuhi ambang minimal {min_n} lowongan, "
             f"mencakup {int(g['count'].sum()):,} lowongan bergaji. "
-            f"Sisanya, {n_semua - len(g):,} judul pekerjaan lain, tidak ditampilkan "
+            f"Sisanya, {n_semua - len(g):,} pekerjaan lain, tidak ditampilkan "
             "karena jumlah lowongannya terlalu sedikit untuk menghasilkan median yang "
             "stabil — turunkan slider di atas bila ingin memasukkannya.")
 
@@ -1774,6 +1870,7 @@ def page_salary():
 
 
 def page_skill_gap():
+    P = kol_pek()
     st.title("🎯 Occupation-Specific Skills")
     st.caption("Membandingkan seberapa besar porsi suatu skill di SATU pekerjaan "
               "dibandingkan porsinya di SELURUH pasar kerja.")
@@ -1814,7 +1911,7 @@ lebih menonjol pada pekerjaan ini daripada rata-rata pasar.*
                  WHERE s.escudero_broad_category IN {broad_sql} GROUP BY s.name""")
     total_base = base.f.sum()
     base = base.set_index("name")
-    titles = q("SELECT title, COUNT(*) n FROM jobs WHERE title!='' GROUP BY title ORDER BY n DESC LIMIT 200")
+    titles = q(f"SELECT {P} AS title, COUNT(*) n FROM jobs WHERE {P}!='' GROUP BY {P} ORDER BY n DESC LIMIT 200")
     pick = st.selectbox("Bandingkan pekerjaan", titles.title.tolist())
     n_lowongan = int(titles.loc[titles.title == pick, "n"].iloc[0])
     if n_lowongan < 10:
@@ -1825,7 +1922,7 @@ lebih menonjol pada pekerjaan ini daripada rata-rata pasar.*
         st.caption(f"Dihitung dari {n_lowongan} lowongan berjudul '{pick}'.")
     sub = q(f"""SELECT s.name, COUNT(*) f FROM jobs j JOIN job_skills js ON js.job_id=j.id
                 JOIN skills s ON s.id=js.skill_id
-                WHERE j.title=? AND s.escudero_broad_category IN {broad_sql} GROUP BY s.name""", (pick,))
+                WHERE j.{P}=? AND s.escudero_broad_category IN {broad_sql} GROUP BY s.name""", (pick,))
     # Kategori Escudero tiap skill, dipakai untuk mewarnai batang sesuai
     # taksonomi -- sehingga langsung terlihat sebuah skill itu cognitive,
     # socioemotional, atau manual tanpa perlu membuka halaman lain.
