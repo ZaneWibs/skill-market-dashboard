@@ -303,6 +303,117 @@ def q(sql, params=()):
     return _q_cached(sql, params, _sidik_db())
 
 
+# ============================================================================
+# BUKTI (EVIDENCE): kalimat asli lowongan tempat sebuah skill disebut
+# ============================================================================
+import html as _html
+
+_RX_BATAS = re.compile(r"\n+|(?<=[.!?;])\s+")
+
+
+def _segmen(teks):
+    """Pecah deskripsi menjadi kalimat/baris: daftar (awal, akhir)."""
+    seg, awal = [], 0
+    for m in _RX_BATAS.finditer(teks):
+        seg.append((awal, m.start()))
+        awal = m.end()
+    seg.append((awal, len(teks)))
+    return seg
+
+
+def _kalimat_bertanda(teks, spans, maks=420):
+    """Kalimat yang memuat skill, dengan kata skill disorot."""
+    keluar = []
+    for a, b in _segmen(teks):
+        di = sorted((max(x, a), min(y, b)) for x, y in spans if x < b and y > a)
+        if not di:
+            continue
+        # potong kalimat yang terlalu panjang di sekitar sorotan pertama
+        if b - a > maks:
+            a2 = max(a, di[0][0] - maks // 2)
+            b2 = min(b, a2 + maks)
+            di = [(x, y) for x, y in di if x >= a2 and y <= b2] or di[:1]
+            a, b, pra, pasca = a2, b2, "… " if a2 > a else "", " …" if b2 < b else ""
+        else:
+            pra = pasca = ""
+        h, pos = [], a
+        for x, y in di:
+            if x < pos:
+                continue
+            h.append(_html.escape(teks[pos:x]))
+            h.append('<mark style="background:#FDE68A;color:#111827;padding:0 2px;'
+                     'border-radius:3px;font-weight:600">' + _html.escape(teks[x:y]) + "</mark>")
+            pos = y
+        h.append(_html.escape(teks[pos:b]))
+        keluar.append(pra + "".join(h).strip() + pasca)
+    return keluar
+
+
+def tampilkan_bukti(nama_skill, kondisi_job, params, judul, key):
+    """Tampilkan lowongan + kalimat tempat skill `nama_skill` disebut.
+    kondisi_job: potongan SQL atas alias j (tabel jobs) untuk membatasi lowongan."""
+    if not _ada_tabel("skill_bukti") or not _ada_tabel("job_deskripsi"):
+        st.info("Tabel bukti belum ada di database. Gunakan ner_jobposting.sqlite versi terbaru.")
+        return
+    total = q(f"""SELECT COUNT(DISTINCT js.job_id) n FROM job_skills js
+                  JOIN skills s ON s.id = js.skill_id JOIN jobs j ON j.id = js.job_id
+                  WHERE s.name = ? AND {kondisi_job}""", (nama_skill, *params)).n[0]
+    d = q(f"""SELECT b.job_id, b.start, b."end" AS akhir, j.title, j.url,
+                     COALESCE(c.name, '') AS perusahaan, dk.deskripsi
+              FROM skill_bukti b JOIN skills s ON s.id = b.skill_id
+              JOIN jobs j ON j.id = b.job_id
+              LEFT JOIN companies c ON c.id = j.company_id
+              JOIN job_deskripsi dk ON dk.job_id = b.job_id
+              WHERE s.name = ? AND {kondisi_job}
+              ORDER BY b.job_id, b.start""", (nama_skill, *params))
+    st.markdown(f"#### 🔎 Bukti: “{nama_skill}” — {judul}")
+    if d.empty:
+        st.info("Kalimat sumber untuk skill ini tidak ditemukan pada teks lowongan.")
+        return
+    per_job = list(d.groupby("job_id", sort=False))
+    st.caption(f"{len(per_job):,} dari {total:,} lowongan punya kalimat sumber yang dapat "
+              "ditunjukkan. Kata yang disorot adalah teks yang dikenali sebagai skill. "
+              "Lowongan lain menyebut skill ini dengan ejaan/varian yang tidak dapat "
+              "dilacak posisinya.")
+    per_hal = 10
+    n_hal = max(1, -(-len(per_job) // per_hal))
+    hal = st.number_input(f"Halaman bukti (1–{n_hal})", 1, n_hal, 1, key=f"{key}_hal") \
+        if n_hal > 1 else 1
+    for jid, g in per_job[(hal - 1) * per_hal: hal * per_hal]:
+        r = g.iloc[0]
+        kal = _kalimat_bertanda(r.deskripsi or "", list(zip(g.start, g.akhir)))
+        if not kal:
+            continue
+        tautan = f' · <a href="{_html.escape(r.url)}" target="_blank">lowongan asli ↗</a>' \
+            if isinstance(r.url, str) and r.url.startswith("http") else ""
+        isi = "".join(f'<li style="margin:2px 0">{k}</li>' for k in kal[:4])
+        st.markdown(
+            f'<div style="border:1px solid #E5E7EB;border-radius:8px;padding:10px 14px;'
+            f'margin-bottom:8px"><div style="font-weight:600">{_html.escape(r.title or "")}'
+            f'<span style="font-weight:400;color:#6B7280"> · {_html.escape(r.perusahaan)}'
+            f'{tautan}</span></div><ul style="margin:6px 0 0 18px;padding:0">{isi}</ul></div>',
+            unsafe_allow_html=True)
+
+
+def _klik(event, kolom="y"):
+    """Ambil kategori batang yang diklik pada grafik Plotly (Streamlit on_select)."""
+    try:
+        titik = event.selection.points if event else []
+        return titik[0][kolom] if titik else None
+    except Exception:
+        return None
+
+
+def chart_bisa_diklik(fig, key):
+    """st.plotly_chart dengan pemilihan titik; jatuh ke grafik biasa pada Streamlit lama."""
+    try:
+        return st.plotly_chart(fig, use_container_width=True, on_select="rerun",
+                               selection_mode="points", key=key)
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True)
+        return None
+
+
 def kol_lok():
     """Lokasi dianalisis per provinsi (saran pembimbing). DB lama tanpa kolom
     provinsi kembali ke nama lokasi asli."""
@@ -366,6 +477,7 @@ page = st.sidebar.radio("Halaman", [
     "Jumlah Lowongan per Pekerjaan",
     "Klasifikasi Jabatan (KBJI 2014)",
     "Skill per Pekerjaan",
+    "Pekerjaan per Skill",
     "Detail Kebutuhan per Pekerjaan",
     "Lokasi & Pekerjaan",
     "Skill per Lokasi",
@@ -740,18 +852,130 @@ def page_skill_by_job():
     titles = q(f"""SELECT {P} AS title, COUNT(*) n FROM jobs
                   WHERE {P} != '' GROUP BY {P} ORDER BY n DESC LIMIT 300""")
     pick = st.selectbox("Pilih pekerjaan", titles.title.tolist())
-    df = q(f"""SELECT s.name, s.label, s.escudero_subcategory, COUNT(DISTINCT js.job_id) freq
+    n_pek = int(titles.loc[titles.title == pick, "n"].iloc[0])
+    df = q(f"""SELECT s.name, s.escudero_subcategory, COUNT(DISTINCT js.job_id) freq
               FROM jobs j JOIN job_skills js ON js.job_id = j.id
               JOIN skills s ON s.id = js.skill_id
               WHERE j.{P} = ? AND s.escudero_broad_category IN {broad_sql}
-              GROUP BY s.name, s.label ORDER BY freq DESC LIMIT 25""", (pick,))
+              GROUP BY s.name ORDER BY freq DESC LIMIT 25""", (pick,))
     if df.empty:
         st.info("Belum ada skill tercatat untuk pekerjaan ini.")
-    else:
-        st.plotly_chart(px.bar(df.iloc[::-1], x="freq", y="name", color="escudero_subcategory",
-                        orientation="h", color_discrete_map=ESCUDERO_SUB_COLORS,
-                        labels={"freq": "Jumlah Lowongan", "name": "Skill", "escudero_subcategory": "Subkategori"}),
-                        use_container_width=True)
+        return
+    df["persen"] = df.freq / n_pek * 100
+    df["teks"] = df.persen.round(0).astype(int).astype(str) + "%"
+    df["penjelasan"] = [f"Lowongan {pick} menyebut <b>{nm}</b> di {n} dari {n_pek} lowongan,"
+                        f"<br>jadi skill ini ada di {p:.0f}% lowongan pekerjaan ini."
+                        for nm, n, p in zip(df.name, df.freq, df.persen)]
+    st.caption(f"Persentase = jumlah lowongan '{pick}' yang menyebut skill ÷ total "
+              f"{n_pek:,} lowongan '{pick}'. Arahkan kursor ke batang untuk penjelasan; "
+              "**klik batang** untuk melihat bukti kalimat lowongannya.")
+    fig = px.bar(df.iloc[::-1], x="persen", y="name", color="escudero_subcategory",
+                 orientation="h", color_discrete_map=ESCUDERO_SUB_COLORS, text="teks",
+                 custom_data=["penjelasan", "escudero_subcategory"],
+                 height=26 * len(df) + 160,
+                 labels={"persen": "Persentase Lowongan (%)", "name": "Skill",
+                         "escudero_subcategory": "Subkategori"})
+    fig.update_traces(textposition="outside", cliponaxis=False,
+                      hovertemplate="<b>%{y}</b> — %{x:.0f}%<br>%{customdata[0]}"
+                                    "<br><i>%{customdata[1]}</i>"
+                                    "<br><span style='color:#2563EB'>▶ Klik untuk lihat bukti</span>"
+                                    "<extra></extra>")
+    fig.update_yaxes(tickmode="linear", dtick=1, automargin=True, categoryorder="total ascending")
+    fig.update_xaxes(range=[0, min(100, df.persen.max() * 1.15 + 5)])
+    fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.12, x=0, title_text=""))
+    ev = chart_bisa_diklik(fig, key=f"spj_{pick}")
+    klik = _klik(ev)
+    opsi = df.name.tolist()
+    skill = st.selectbox("Lihat bukti untuk skill", opsi,
+                         index=opsi.index(klik) if klik in opsi else 0,
+                         key=f"spj_bukti_{pick}_{klik}")
+    tampilkan_bukti(skill, f"j.{P} = ?", (pick,), f"di lowongan {pick}", key=f"spj_{pick}_{skill}")
+
+
+def page_job_by_skill():
+    P = kol_pek()
+    st.title("🔁 Pekerjaan per Skill")
+    st.caption("Kebalikan dari Skill per Pekerjaan: pilih skill, lalu lihat pekerjaan mana "
+              "saja yang membutuhkannya dan seberapa sering skill itu muncul di pekerjaan tersebut.")
+    total_low = q("SELECT COUNT(*) n FROM jobs").n[0]
+    top = q(f"""SELECT s.name, s.escudero_subcategory AS sub, COUNT(DISTINCT js.job_id) n
+                FROM job_skills js JOIN skills s ON s.id = js.skill_id
+                WHERE s.escudero_broad_category IN {broad_sql}
+                GROUP BY s.name ORDER BY n DESC LIMIT 15""")
+    if top.empty:
+        st.info("Belum ada data skill.")
+        return
+    top["persen"] = top.n / total_low * 100
+    top["teks"] = top.n.map("{:,}".format)
+    st.subheader("15 Skill yang Paling Banyak Muncul")
+    f0 = px.bar(top.iloc[::-1], x="n", y="name", orientation="h", color="sub", text="teks",
+                color_discrete_map=ESCUDERO_SUB_COLORS, custom_data=["persen"],
+                height=26 * 15 + 160,
+                labels={"n": "Jumlah Lowongan", "name": "Skill", "sub": "Subkategori"})
+    f0.update_traces(textposition="outside", cliponaxis=False,
+                     hovertemplate="<b>%{y}</b><br>Disebut di %{x:,} lowongan "
+                                   f"(%{{customdata[0]:.1f}}% dari {total_low:,} lowongan)"
+                                   "<br><span style='color:#2563EB'>▶ Klik untuk memilih skill ini</span>"
+                                   "<extra></extra>")
+    f0.update_yaxes(tickmode="linear", dtick=1, automargin=True, categoryorder="total ascending")
+    f0.update_xaxes(range=[0, top.n.max() * 1.15])
+    f0.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.12, x=0, title_text=""))
+    ev0 = chart_bisa_diklik(f0, key="jps_top")
+    klik0 = _klik(ev0)
+    opsi = top.name.tolist()
+    skill = st.selectbox("Pilih skill", opsi, index=opsi.index(klik0) if klik0 in opsi else 0,
+                         key=f"jps_skill_{klik0}")
+
+    c1, c2 = st.columns(2)
+    min_n = c1.slider("Minimal jumlah lowongan per pekerjaan", 1, 50, 5,
+                      help="Pekerjaan dengan sangat sedikit lowongan menghasilkan persentase "
+                           "yang tidak stabil (mis. 1 dari 1 lowongan = 100%).")
+    urut = c2.radio("Urutkan berdasarkan", ["Persentase", "Jumlah lowongan"], horizontal=True)
+    d = q(f"""WITH tot AS (SELECT {P} AS pek, COUNT(*) n_total FROM jobs
+                           WHERE {P} != '' GROUP BY {P}),
+                   ada AS (SELECT j.{P} AS pek, COUNT(DISTINCT j.id) n_skill
+                           FROM jobs j JOIN job_skills js ON js.job_id = j.id
+                           JOIN skills s ON s.id = js.skill_id
+                           WHERE s.name = ? GROUP BY j.{P})
+              SELECT ada.pek, ada.n_skill, tot.n_total FROM ada JOIN tot USING (pek)""", (skill,))
+    d["persen"] = d.n_skill / d.n_total * 100
+    semua = d.copy()
+    d = d[d.n_total >= min_n]
+    if d.empty:
+        st.info("Tidak ada pekerjaan yang memenuhi ambang. Turunkan nilai minimal lowongan.")
+        return
+    d = d.sort_values("persen" if urut == "Persentase" else "n_skill", ascending=False).head(20)
+    d["teks"] = d.persen.round(0).astype(int).astype(str) + "%"
+    d["penjelasan"] = [f"{pk} menyebut <b>{skill}</b> di {a} dari {b} lowongan,"
+                       f"<br>jadi skill ini ada di {p:.0f}% lowongan pekerjaan itu."
+                       for pk, a, b, p in zip(d.pek, d.n_skill, d.n_total, d.persen)]
+    st.subheader(f"Pekerjaan yang membutuhkan “{skill}”")
+    st.caption(f"Skill ini muncul di {len(semua):,} pekerjaan; ditampilkan 20 teratas dengan "
+              f"minimal {min_n} lowongan. Persentase = lowongan pekerjaan itu yang menyebut "
+              "skill ÷ total lowongan pekerjaan itu. **Klik batang** untuk melihat bukti.")
+    f1 = px.bar(d.iloc[::-1], x="persen", y="pek", orientation="h", text="teks",
+                custom_data=["penjelasan"], color_discrete_sequence=["#2a78d6"],
+                height=28 * len(d) + 140,
+                labels={"persen": "Persentase Lowongan (%)", "pek": "Pekerjaan"})
+    f1.update_traces(textposition="outside", cliponaxis=False,
+                     hovertemplate="<b>%{y}</b> — %{x:.0f}%<br>%{customdata[0]}"
+                                   "<br><span style='color:#2563EB'>▶ Klik untuk lihat bukti</span>"
+                                   "<extra></extra>")
+    f1.update_yaxes(tickmode="linear", dtick=1, automargin=True)
+    f1.update_xaxes(range=[0, min(100, d.persen.max() * 1.15 + 5)])
+    ev1 = chart_bisa_diklik(f1, key=f"jps_pek_{skill}")
+    klik1 = _klik(ev1)
+    opsi_p = d.pek.tolist()
+    pek = st.selectbox("Lihat bukti di pekerjaan", opsi_p,
+                       index=opsi_p.index(klik1) if klik1 in opsi_p else 0,
+                       key=f"jps_pekpilih_{skill}_{klik1}")
+    tampilkan_bukti(skill, f"j.{P} = ?", (pek,), f"di lowongan {pek}", key=f"jps_{skill}_{pek}")
+
+    with st.expander(f"Tabel semua pekerjaan yang menyebut “{skill}”"):
+        st.dataframe(semua.sort_values("n_skill", ascending=False).rename(columns={
+            "pek": "Pekerjaan", "n_skill": "Lowongan yang Menyebut Skill",
+            "n_total": "Total Lowongan Pekerjaan", "persen": "Persentase (%)"}).round(1),
+            use_container_width=True, hide_index=True)
 
 
 def page_job_detail():
@@ -818,7 +1042,16 @@ def page_job_detail():
 
     # ---- Ringkasan taksonomi pekerjaan ini ----
     st.subheader("🧬 Profil Taksonomi Pekerjaan Ini")
-    c0, c1, c2, c3 = st.columns(4)
+    # 2 x 2 dengan legenda di bawah: pada 4 kolom sempit, legenda menyita
+    # ruang sehingga lingkaran pie menyusut hampir tak terlihat.
+    c0, c1 = st.columns(2)
+    c2, c3 = st.columns(2)
+
+    def _pie(fig):
+        fig.update_layout(height=380, margin=dict(t=10, b=10, l=10, r=10),
+                          legend=dict(orientation="h", yanchor="top", y=-0.02,
+                                      xanchor="center", x=0.5))
+        return fig
     with c0:
         esc = q(f"""SELECT s.escudero_broad_category AS kat, COUNT(*) n
                     FROM jobs j JOIN job_skills js ON js.job_id=j.id JOIN skills s ON s.id=js.skill_id
@@ -826,8 +1059,8 @@ def page_job_detail():
                     GROUP BY kat ORDER BY n DESC""", (pick,))
         st.markdown("**Kategori Escudero**")
         if not esc.empty:
-            st.plotly_chart(px.pie(esc, names="kat", values="n", hole=.4,
-                            color="kat", color_discrete_map=ESCUDERO_BROAD_COLORS),
+            st.plotly_chart(_pie(px.pie(esc, names="kat", values="n", hole=.4,
+                            color="kat", color_discrete_map=ESCUDERO_BROAD_COLORS)),
                             use_container_width=True)
         else:
             st.info("Tidak ada data.")
@@ -839,8 +1072,8 @@ def page_job_detail():
         st.markdown("**Domain**")
         if not dom.empty:
             dom = relabel_domain(dom, "domain")
-            st.plotly_chart(px.pie(dom, names="domain", values="n", hole=.4,
-                            color="domain", color_discrete_map=DOMAIN_COLOR_MAP),
+            st.plotly_chart(_pie(px.pie(dom, names="domain", values="n", hole=.4,
+                            color="domain", color_discrete_map=DOMAIN_COLOR_MAP)),
                             use_container_width=True)
         else:
             st.info("Tidak ada data.")
@@ -851,8 +1084,8 @@ def page_job_detail():
                    GROUP BY s.transferability ORDER BY n DESC""", (pick,))
         st.markdown("**Transferability**")
         if not tr.empty:
-            st.plotly_chart(px.pie(tr, names="t", values="n", hole=.4,
-                            color="t", color_discrete_map=TRANSFER_COLORS),
+            st.plotly_chart(_pie(px.pie(tr, names="t", values="n", hole=.4,
+                            color="t", color_discrete_map=TRANSFER_COLORS)),
                             use_container_width=True)
         else:
             st.info("Tidak ada data.")
@@ -863,8 +1096,8 @@ def page_job_detail():
                     GROUP BY imp ORDER BY n DESC""", (pick,))
         st.markdown("**Importance**")
         if not imp.empty:
-            st.plotly_chart(px.pie(imp, names="imp", values="n", hole=.4,
-                            color="imp", color_discrete_map=IMPORTANCE_COLORS),
+            st.plotly_chart(_pie(px.pie(imp, names="imp", values="n", hole=.4,
+                            color="imp", color_discrete_map=IMPORTANCE_COLORS)),
                             use_container_width=True)
         else:
             st.info("Tidak ada data.")
@@ -905,15 +1138,22 @@ def page_job_detail():
                             use_container_width=True)
     with c5:
         st.markdown("**Bidang Studi (Degree Field)**")
-        deg = q(f"""SELECT LOWER(e.text) field, COUNT(*) n FROM jobs j JOIN entities e ON e.job_id=j.id
-                   WHERE j.{P}=? AND e.label='DEGREE_FIELD'
-                   GROUP BY LOWER(e.text) ORDER BY n DESC LIMIT 15""", (pick,))
+        # Memakai program studi baku (sinonim seperti accounting/akuntansi atau
+        # marketing/pemasaran sudah digabung), bukan teks DEGREE_FIELD mentah.
+        if _ada_tabel("job_bidang_studi"):
+            deg = q(f"""SELECT b.nama_program_studi field, COUNT(DISTINCT b.job_id) n
+                       FROM jobs j JOIN job_bidang_studi b ON b.job_id=j.id
+                       WHERE j.{P}=? GROUP BY 1 ORDER BY n DESC LIMIT 15""", (pick,))
+        else:
+            deg = q(f"""SELECT LOWER(e.text) field, COUNT(*) n FROM jobs j JOIN entities e ON e.job_id=j.id
+                       WHERE j.{P}=? AND e.label='DEGREE_FIELD'
+                       GROUP BY LOWER(e.text) ORDER BY n DESC LIMIT 15""", (pick,))
         if deg.empty:
             st.info("Tidak dicantumkan.")
         else:
             st.plotly_chart(px.bar(deg.iloc[::-1], x="n", y="field", orientation="h",
                             color_discrete_sequence=[CLR_DEGREE],
-                            labels={"n": "Jumlah", "field": "Bidang Studi"}),
+                            labels={"n": "Jumlah Lowongan", "field": "Program Studi"}),
                             use_container_width=True)
 
 
@@ -2020,6 +2260,7 @@ PAGES = {
     "Jumlah Lowongan per Pekerjaan": page_job_title_summary,
     "Klasifikasi Jabatan (KBJI 2014)": page_kbji_classification,
     "Skill per Pekerjaan": page_skill_by_job,
+    "Pekerjaan per Skill": page_job_by_skill,
     "Detail Kebutuhan per Pekerjaan": page_job_detail,
     "Lokasi & Pekerjaan": page_location_job_title,
     "Skill per Lokasi": page_skill_by_location,
